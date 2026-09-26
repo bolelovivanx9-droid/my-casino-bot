@@ -12,7 +12,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # <-- Обрати внимание на два подчеркивания: __name__
 
 load_dotenv()
 
@@ -24,9 +24,7 @@ if not BOT_TOKEN:
     raise ValueError("Токен бота не установлен!")
 else:
     logger.info("✅ Токен успешно загружен.")
-# -------------------------------------------------------
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# ---------------------------------------
 
 if not BOT_TOKEN:
     # Эта ошибка гарантированно появится в логах, если токена нет
