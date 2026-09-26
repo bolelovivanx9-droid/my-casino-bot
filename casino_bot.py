@@ -3,20 +3,14 @@ import random
 import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
 
 DB_NAME = "casino.db"
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        balance INTEGER DEFAULT 1000,
-        last_bonus TIMESTAMP,
-        wins INTEGER DEFAULT 0,
-        losses INTEGER DEFAULT 0
-    )''')
+    c.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 1000, last_bonus TIMESTAMP, wins INTEGER DEFAULT 0, losses INTEGER DEFAULT 0)")
     conn.commit()
     conn.close()
 
@@ -50,12 +44,65 @@ def give_bonus(user_id):
         return True
     return False
 
+def hand_value(hand):
+    value = 0
+    aces = sum(1 for c in hand if c == 1)
+    for c in hand:
+        if c == 1: value += 11
+        elif c > 10: value += 10
+        else: value += c
+    while value > 21 and aces > 0:
+        value -= 10
+        aces -= 1
+    return value
+
+# --- Команды ---
+
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    balance = user[1]
+    text = (
+        "🎰 Добро пожаловать в казино!\n\n"
+        f"💰 Твой баланс: {balance} фишек\n\n"
+        "Доступные команды:\n"
+        "/start — это сообщение\n"
+        "/balance — проверить баланс\n"
+        "/bonus — получить ежедневный бонус (200 фишек)\n"
+        "/рулетка <ставка> <вариант> — рулетка\n"
+        "/блэкджек <ставка> — блэкджек\n"
+        "/слоты <ставка> — слоты\n"
+        "/карта <ставка> <выше|ниже> — карта выше/ниже\n"
+        "/монетка <ставка> <орёл|решка> — орёл и решка\n\n"
+        "Примеры:\n"
+        "/рулетка 100 красное\n"
+        "/слоты 50\n"
+        "/монетка 100 орёл"
+    )
+    await update.message.reply_text(text)
+
+async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    await update.message.reply_text(f"💰 Твой баланс: {user[1]} фишек.")
+
+async def bonus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if give_bonus(update.effective_user.id):
+        user = get_user(update.effective_user.id)
+        await update.message.reply_text(f"🎁 Бонус получен! +200 фишек.\n💰 Твой баланс: {user[1]} фишек.")
+    else:
+        await update.message.reply_text("⏰ Бонус уже получен. Возвращайся через 24 часа!")
+
 # --- Игры ---
 
 async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 2:
-        await update.message.reply_text("🎰 Рулетка: поставь ставку и выбери вариант.\nПримеры:\n`рулетка 100 красное`\n`рулетка 50 чёт`\n`рулетка 25 17`", parse_mode='Markdown')
+        await update.message.reply_text(
+            "🎰 Рулетка: поставь ставку и выбери вариант.\n"
+            "Примеры:\n"
+            "/рулетка 100 красное\n"
+            "/рулетка 50 чёт\n"
+            "/рулетка 25 17"
+        )
         return
     try:
         bet = int(msg[1])
@@ -106,7 +153,7 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 2:
-        await update.message.reply_text("🃏 Блэкджек: укажи ставку.\nПример: `блэкджек 100`", parse_mode='Markdown')
+        await update.message.reply_text("🃏 Блэкджек: укажи ставку.\nПример: /блэкджек 100")
         return
     try:
         bet = int(msg[1])
@@ -124,20 +171,7 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player_hand = [deck.pop(), deck.pop()]
     dealer_hand = [deck.pop(), deck.pop()]
 
-    def hand_value(hand):
-        value = 0
-        aces = sum(1 for c in hand if c == 1)
-        for c in hand:
-            if c == 1: value += 11
-            elif c > 10: value += 10
-            else: value += c
-        while value > 21 and aces > 0:
-            value -= 10
-            aces -= 1
-        return value
-
     p_val = hand_value(player_hand)
-    d_val = hand_value(dealer_hand)
 
     if p_val == 21:
         update_balance(update.effective_user.id, int(bet * 1.5))
@@ -156,6 +190,7 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
     data = query.data.split("_")
     action, bet_str, p_val_str, dealer_first = data[1], data[2], data[3], data[4]
     bet = int(bet_str)
@@ -164,9 +199,7 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
 
     deck = [i for i in range(1, 14)] * 4
     random.shuffle(deck)
-    # Воспроизводим раздачу (упрощённо, для демо)
     dealer_hand = [int(dealer_first), deck.pop()]
-    player_hand = [] # не храним, считаем по p_val
 
     if action == "hit":
         new_card = deck.pop()
@@ -185,7 +218,6 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
-    # Stand
     while hand_value(dealer_hand) < 17:
         dealer_hand.append(deck.pop())
     d_val = hand_value(dealer_hand)
@@ -205,22 +237,13 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
 
     await query.edit_message_text(msg)
 
-def hand_value(hand): # дублируем для колбэка
-    value = 0
-    aces = sum(1 for c in hand if c == 1)
-    for c in hand:
-        if c == 1: value += 11
-        elif c > 10: value += 10
-        else: value += c
-    while value > 21 and aces > 0:
-        value -= 10
-        aces -= 1
-    return value
-
 async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 2:
-        await update.message.reply_text("🎲 Слоты: поставь ставку.\nПример: `слоты 50`\nВыплаты: 🍒x3, 🍋x4, 🔔x5, ⭐x10, 💎x20, 7️⃣x50", parse_mode='Markdown')
+        await update.message.reply_text(
+            "🎲 Слоты: поставь ставку.\nПример: /слоты 50\n"
+            "Выплаты: 🍓x3, 🍋x4, 🔔x5, ⭐x10, 💎x20, 7️⃣x50"
+        )
         return
     try:
         bet = int(msg[1])
@@ -233,19 +256,19 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💸 Мало фишек.")
         return
 
-    symbols = ["🍒", "🍋", "🔔", "⭐", "💎", "7️⃣"]
+    symbols = ["🍓", "🍋", "🔔", "⭐", "💎", "7️⃣"]
     reels = [random.choice(symbols) for _ in range(3)]
-    
-    payout_map = {"🍒":3, "🍋":4, "🔔":5, "⭐":10, "💎":20, "7️⃣":50}
+
+    payout_map = {"🍓":3, "🍋":4, "🔔":5, "⭐":10, "💎":20, "7️⃣":50}
     winnings = 0
     if reels[0] == reels[1] == reels[2]:
         winnings = bet * payout_map[reels[0]]
     elif reels[0] == reels[1] or reels[1] == reels[2] or reels[0] == reels[2]:
-        winnings = bet # возврат
+        winnings = bet
 
     net = winnings - bet
     update_balance(update.effective_user.id, net)
-    
+
     text = f"🎲 {reels[0]} {reels[1]} {reels[2]}\n"
     if net > 0:
         text += f"🎉 Выигрыш: {net} фишек!"
@@ -258,7 +281,10 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 3:
-        await update.message.reply_text("🃟 Карта выше/ниже: укажи ставку и выбор.\nПример: `карта 100 выше` или `карта 100 ниже`", parse_mode='Markdown')
+        await update.message.reply_text(
+            "🃟 Карта выше/ниже: укажи ставку и выбор.\n"
+            "Пример: /карта 100 выше или /карта 100 ниже"
+        )
         return
     try:
         bet = int(msg[1])
@@ -272,14 +298,14 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💸 Нет фишек.")
         return
 
-    cards = list(range(2, 15)) # 2-14 (14=туз)
+    cards = list(range(2, 15))
     random.shuffle(cards)
     current = cards.pop()
     next_card = cards.pop()
 
     won = (choice == "выше" and next_card > current) or (choice == "ниже" and next_card < current)
     multiplier = 1.8
-    
+
     if won:
         winnings = int(bet * (multiplier - 1))
         update_balance(update.effective_user.id, winnings)
@@ -291,7 +317,7 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 3:
-        await update.message.reply_text("🪙 Монетка: ставка и сторона.\nПример: `монетка 100 орёл`", parse_mode='Markdown')
+        await update.message.reply_text("🪙 Монетка: ставка и сторона.\nПример: /монетка 100 орёл")
         return
     try:
         bet = int(msg[1])
@@ -309,30 +335,33 @@ async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if choice == side:
         winnings = int(bet * 0.8)
         update_balance(update.effective_user.id, winnings)
-from telegram.ext import ApplicationBuilder
-import os
+        await update.message.reply_text(f"🪙 Выпало: {side}\n🎉 Ты угадал! +{winnings} фишек.")
+    else:
+        update_balance(update.effective_user.id, -bet)
+        await update.message.reply_text(f"🪙 Выпало: {side}\n😞 Не угадал. -{bet} фишек.")
+
+# --- Запуск ---
 
 def main():
     token = os.getenv("BOT_TOKEN")
     if not token:
-        raise ValueError("BOT_TOKEN не найден!")
+        raise ValueError("BOT_TOKEN not found! Check env vars in Bothost panel.")
 
     application = ApplicationBuilder().token(token).build()
 
-    # Регистрируем команды
-    application.add_handler(CommandHandler("roulette", roulette_cmd))
-    application.add_handler(CommandHandler("blackjack", blackjack_cmd))
-    application.add_handler(CommandHandler("slots", slots_cmd))
-    application.add_handler(CommandHandler("card", card_cmd))
-    application.add_handler(CommandHandler("coin", coin_cmd))
-
-    # Обработчик колбэков (кнопки)
-    from telegram.ext import CallbackQueryHandler
+    application.add_handler(CommandHandler("start", start_cmd))
+    application.add_handler(CommandHandler("balance", balance_cmd))
+    application.add_handler(CommandHandler("bonus", bonus_cmd))
+    application.add_handler(CommandHandler("рулетка", roulette_cmd))
+    application.add_handler(CommandHandler("блэкджек", blackjack_cmd))
+    application.add_handler(CommandHandler("слоты", slots_cmd))
+    application.add_handler(CommandHandler("карта", card_cmd))
+    application.add_handler(CommandHandler("монетка", coin_cmd))
     application.add_handler(CallbackQueryHandler(handle_blackjack_callback))
 
-    print("🚀 Бот запускается...")
+    print("Bot starting...")
     application.run_polling()
 
 if __name__ == "__main__":
-    init_db()  # создаём базу при старте
+    init_db()
     main()
