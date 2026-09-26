@@ -344,23 +344,31 @@ async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     token = os.getenv("BOT_TOKEN")
+    
+    # Безопасная проверка
     if not token:
-        raise ValueError("BOT_TOKEN not found! Check env vars in Bothost panel.")
+        print("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN пуста!")
+        print("👉 Проверь панель хостинга и нажми СОХРАНИТЬ переменные!")
+        return
 
+    print(f"✅ Токен найден (первые 5 символов: {token[:5]}...)")
+    
     application = ApplicationBuilder().token(token).build()
 
-    application.add_handler(CommandHandler("start", start_cmd))
-    application.add_handler(CommandHandler("balance", balance_cmd))
-    application.add_handler(CommandHandler("bonus", bonus_cmd))
+    # Команды (обрати внимание: ключи - это ТЕКСТ команды в Telegram, без слэша)
+    application.add_handler(CommandHandler("start", start_cmd))       # Нужно добавить функцию start_cmd!
     application.add_handler(CommandHandler("рулетка", roulette_cmd))
     application.add_handler(CommandHandler("блэкджек", blackjack_cmd))
     application.add_handler(CommandHandler("слоты", slots_cmd))
     application.add_handler(CommandHandler("карта", card_cmd))
     application.add_handler(CommandHandler("монетка", coin_cmd))
+    application.add_handler(CommandHandler("баланс", balance_cmd))    # Нужно добавить функцию balance_cmd!
+    application.add_handler(CommandHandler("бонус", bonus_cmd))        # Нужно добавить функцию bonus_cmd!
+
     application.add_handler(CallbackQueryHandler(handle_blackjack_callback))
 
-    print("Bot starting...")
-    application.run_polling()
+    print("🚀 Бот запускается и начинает слушать Telegram...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     init_db()
