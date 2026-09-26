@@ -39,6 +39,7 @@ def update_balance(user_id, amount):
 def give_bonus(user_id):
     now = datetime.now()
     user = get_user(user_id)
+    # user - это колонка last_bonus
     last_bonus_str = user
     
     if last_bonus_str is None:
@@ -77,14 +78,15 @@ def hand_value(hand):
         aces -= 1
     return value
 
-# --- Команды (теперь на английском!) ---
+# --- Команды ---
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
+    # user - это баланс
     await update.message.reply_text(
         f"👋 Привет, {update.effective_user.first_name}!\n"
         f"💰 Твой баланс: {user} фишек.\n\n"
-        f"Доступные игры (пиши команды на английском):\n"
+        f"Доступные игры (команды на английском):\n"
         f"/roulette - рулетка\n"
         f"/blackjack - блэкджек\n"
         f"/slots - слоты\n"
@@ -109,6 +111,7 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(msg) < 2:
         await update.message.reply_text("🎰 Рулетка: поставь ставку и выбери вариант.\nПримеры:\n`roulette 100 red`\n`roulette 50 even`\n`roulette 25 17`", parse_mode='Markdown')
         return
+    
     try:
         bet = int(msg)
     except ValueError:
@@ -160,6 +163,7 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(msg) < 2:
         await update.message.reply_text("🃏 Блэкджек: укажи ставку.\nПример: `blackjack 100`", parse_mode='Markdown')
         return
+    
     try:
         bet = int(msg)
     except ValueError:
@@ -185,6 +189,7 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🃏 Натуральный блэкджек! Ты получил {winnings} фишек!")
         return
 
+    # Передаем только первую карту дилера в callback_data, чтобы не ломать парсинг
     keyboard = [
         [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_hand}")],
         [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_hand}")]
@@ -200,15 +205,15 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
     
     data = query.data.split("_")
-    if len(data) < 5:
+    if len(data) < 4:
         await query.edit_message_text("❌ Ошибка сессии. Начни игру заново.")
         return
 
-    action, bet_str, p_val_str, dealer_first = data, data, data, data
-    
+    action = data
     try:
-        bet = int(bet_str)
-        p_val = int(p_val_str)
+        bet = int(data)
+        p_val = int(data)
+        dealer_first = int(data)
     except ValueError:
         await query.edit_message_text("❌ Ошибка данных. Начни игру заново.")
         return
@@ -217,7 +222,7 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
     deck = [i for i in range(1, 14)] * 4
     random.shuffle(deck)
     
-    dealer_hand = [int(dealer_first), deck.pop()]
+    dealer_hand = [dealer_first, deck.pop()]
     
     if action == "hit":
         new_card = deck.pop()
@@ -230,11 +235,11 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
             return
             
         keyboard = [
-            [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_hand}")],
-            [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_hand}")]
+            [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_first}")],
+            [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_first}")]
         ]
         await query.edit_message_text(
-            f"🃏 Твоя сумма: {p_val}. Дилер: [{dealer_hand}, ?]\nЧто делаешь?",
+            f"🃏 Твоя сумма: {p_val}. Дилер: [{dealer_first}, ?]\nЧто делаешь?",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
@@ -263,6 +268,7 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(msg) < 2:
         await update.message.reply_text("🎲 Слоты: поставь ставку.\nПример: `slots 50`\nВыплаты: 🍒x3, 🍋x4, 🔔x5, ⭐x10, 💎x20, 7️⃣x50", parse_mode='Markdown')
         return
+    
     try:
         bet = int(msg)
     except ValueError:
@@ -279,6 +285,8 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     payout_map = {"🍒":3, "🍋":4, "🔔":5, "⭐":10, "💎":20, "7️⃣":50}
     winnings = 0
+    
+    # Исправленная логика проверки совпадений
     if reels == reels == reels:
         winnings = bet * payout_map[reels]
     elif reels == reels or reels == reels or reels == reels:
@@ -301,6 +309,7 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(msg) < 3:
         await update.message.reply_text("🃟 Карта выше/ниже: укажи ставку и выбор.\nПример: `card 100 higher` или `card 100 lower`", parse_mode='Markdown')
         return
+    
     try:
         bet = int(msg)
         choice = msg.lower()
@@ -329,11 +338,12 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_balance(update.effective_user.id, -bet)
         await update.message.reply_text(f"🃟 Текущая: {current}, следующая: {next_card}\n😞 Не угадал. -{bet} фишек.")
 
-async def coin_cmd(update: Update, ContextTypes.DEFAULT_TYPE):
+async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 3:
         await update.message.reply_text("🪙 Монетка: ставка и сторона.\nПример: `coin 100 heads` (heads/tails)", parse_mode='Markdown')
         return
+    
     try:
         bet = int(msg)
         choice = msg.lower()
@@ -360,13 +370,13 @@ def main():
     
     if not token:
         print("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN пуста!")
+        print("Убедись, что в настройках проекта (или в .env) задана переменная BOT_TOKEN с твоим токеном.")
         return
 
     print(f"✅ Токен найден. Запуск бота...")
     
     application = ApplicationBuilder().token(token).build()
 
-    # Регистрируем команды ТОЛЬКО на английском
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("roulette", roulette_cmd))
     application.add_handler(CommandHandler("blackjack", blackjack_cmd))
