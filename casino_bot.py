@@ -7,35 +7,14 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 from dotenv import load_dotenv
 import logging
 
-# Включаем логирование, чтобы видеть ошибки в консоли
+# --- НАСТРОЙКА ЛОГГИРОВАНИЯ ---
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)  # <-- Обрати внимание на два подчеркивания: __name__
+logger = logging.getLogger(__name__)
 
 load_dotenv()
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-if not BOT_TOKEN:
-    logger.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN не найдена!")
-    logger.error("Проверь настройки переменных окружения в панели хостинга.")
-    raise ValueError("Токен бота не установлен!")
-else:
-    logger.info("✅ Токен успешно загружен.")
-# ---------------------------------------
-
-if not BOT_TOKEN:
-    # Эта ошибка гарантированно появится в логах, если токена нет
-    logger.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN не найдена!")
-    logger.error("Проверь настройки переменных окружения в панели хостинга.")
-    raise ValueError("Токен бота не установлен!")
-else:
-    logger.info("✅ Токен успешно загружен.")
-# 👆 ВСТАВЛЯТЬ ДО СЮДА 👆
-
-DB_NAME = "casino.db"
 
 DB_NAME = "casino.db"
 
@@ -51,10 +30,12 @@ def init_db():
     )''')
     conn.commit()
     conn.close()
+    logger.info("✅ База данных инициализирована.")
 
 def get_user(user_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    # Сначала убедимся, что пользователь есть в базе
     c.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
     c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = c.fetchone()
@@ -71,8 +52,10 @@ def update_balance(user_id, amount):
 def give_bonus(user_id):
     now = datetime.now()
     user = get_user(user_id)
-    # user - это колонка last_bonus
-    last_bonus_str = user
+    
+    # user = (user_id, balance, last_bonus, wins, losses)
+    # last_bonus находится по индексу 2
+    last_bonus_str = user 
     
     if last_bonus_str is None:
         update_balance(user_id, 200)
@@ -94,6 +77,7 @@ def give_bonus(user_id):
             conn.close()
             return True
     except ValueError:
+        # Если дата в базе в неверном формате, считаем, что бонуса не было
         pass
         
     return False
@@ -140,8 +124,8 @@ async def bonus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
-    if len(msg) < 2:
-        await update.message.reply_text("🎰 Рулетка: поставь ставку и выбери вариант.\nПримеры:\n`roulette 100 red`\n`roulette 50 even`\n`roulette 25 17`", parse_mode='Markdown')
+    if len(msg) < 3:
+        await update.message.reply_text("🎰 Рулетка: поставь ставку и выбери вариант.\nПримеры:\n`/roulette 100 red`\n`/roulette 50 even`\n`/roulette 25 17`", parse_mode='Markdown')
         return
     
     try:
@@ -193,7 +177,7 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 2:
-        await update.message.reply_text("🃏 Блэкджек: укажи ставку.\nПример: `blackjack 100`", parse_mode='Markdown')
+        await update.message.reply_text("🃏 Блэкджек: укажи ставку.\nПример: `/blackjack 100`", parse_mode='Markdown')
         return
     
     try:
@@ -221,7 +205,8 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🃏 Натуральный блэкджек! Ты получил {winnings} фишек!")
         return
 
-    # Передаем только первую карту дилера в callback_data, чтобы не ломать парсинг
+    # Передаем только первую карту дилера в callback_data
+    # Формат: bj_action_bet_p_val_dealer_first
     keyboard = [
         [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_hand}")],
         [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_hand}")]
@@ -237,11 +222,12 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
     
     data = query.data.split("_")
-    if len(data) < 4:
+    # Ожидаемый формат: bj_hit_bet_p_val_dealer_first
+    if len(data) < 5:
         await query.edit_message_text("❌ Ошибка сессии. Начни игру заново.")
         return
 
-    action = data
+    action = data # hit или stand
     try:
         bet = int(data)
         p_val = int(data)
@@ -276,6 +262,7 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
+    # Логика дилера (stand)
     while hand_value(dealer_hand) < 17:
         dealer_hand.append(deck.pop())
     d_val = hand_value(dealer_hand)
@@ -298,7 +285,7 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
 async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 2:
-        await update.message.reply_text("🎲 Слоты: поставь ставку.\nПример: `slots 50`\nВыплаты: 🍒x3, 🍋x4, 🔔x5, ⭐x10, 💎x20, 7️⃣x50", parse_mode='Markdown')
+        await update.message.reply_text("🎲 Слоты: поставь ставку.\nПример: `/slots 50`\nВыплаты: 🍒x3, 🍋x4, 🔔x5, ⭐x10, 💎x20, 7️⃣x50", parse_mode='Markdown')
         return
     
     try:
@@ -318,7 +305,7 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payout_map = {"🍒":3, "🍋":4, "🔔":5, "⭐":10, "💎":20, "7️⃣":50}
     winnings = 0
     
-    # Исправленная логика проверки совпадений
+    # Исправленная логика: сравниваем элементы списка по индексам
     if reels == reels == reels:
         winnings = bet * payout_map[reels]
     elif reels == reels or reels == reels or reels == reels:
@@ -339,7 +326,7 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 3:
-        await update.message.reply_text("🃟 Карта выше/ниже: укажи ставку и выбор.\nПример: `card 100 higher` или `card 100 lower`", parse_mode='Markdown')
+        await update.message.reply_text("🃟 Карта выше/ниже: укажи ставку и выбор.\nПример: `/card 100 higher` или `/card 100 lower`", parse_mode='Markdown')
         return
     
     try:
@@ -373,7 +360,7 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 3:
-        await update.message.reply_text("🪙 Монетка: ставка и сторона.\nПример: `coin 100 heads` (heads/tails)", parse_mode='Markdown')
+        await update.message.reply_text("🪙 Монетка: ставка и сторона.\nПример: `/coin 100 heads` (heads/tails)", parse_mode='Markdown')
         return
     
     try:
@@ -401,11 +388,11 @@ def main():
     token = os.getenv("BOT_TOKEN")
     
     if not token:
-        print("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN пуста!")
-        print("Убедись, что в настройках проекта (или в .env) задана переменная BOT_TOKEN с твоим токеном.")
+        logger.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN пуста!")
+        logger.error("Убедись, что в настройках проекта (или в .env) задана переменная BOT_TOKEN с твоим токеном.")
         return
 
-    print(f"✅ Токен найден. Запуск бота...")
+    logger.info(f"✅ Токен найден. Запуск бота...")
     
     application = ApplicationBuilder().token(token).build()
 
@@ -420,7 +407,7 @@ def main():
 
     application.add_handler(CallbackQueryHandler(handle_blackjack_callback))
 
-    print("🚀 Бот запускается и начинает слушать Telegram...")
+    logger.info("🚀 Бот запускается и начинает слушать Telegram...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
