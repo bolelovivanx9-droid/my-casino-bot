@@ -10,7 +10,13 @@ DB_NAME = "casino.db"
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 1000, last_bonus TIMESTAMP, wins INTEGER DEFAULT 0, losses INTEGER DEFAULT 0)")
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        balance INTEGER DEFAULT 1000,
+        last_bonus TIMESTAMP,
+        wins INTEGER DEFAULT 0,
+        losses INTEGER DEFAULT 0
+    )''')
     conn.commit()
     conn.close()
 
@@ -33,8 +39,9 @@ def update_balance(user_id, amount):
 def give_bonus(user_id):
     now = datetime.now()
     user = get_user(user_id)
-    last_bonus = user[2]
-    if last_bonus is None or (now - datetime.fromisoformat(last_bonus)) >= timedelta(hours=24):
+    last_bonus_str = user
+    
+    if last_bonus_str is None:
         update_balance(user_id, 200)
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -42,6 +49,20 @@ def give_bonus(user_id):
         conn.commit()
         conn.close()
         return True
+    
+    try:
+        last_bonus = datetime.fromisoformat(last_bonus_str)
+        if (now - last_bonus) >= timedelta(hours=24):
+            update_balance(user_id, 200)
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (now.isoformat(), user_id))
+            conn.commit()
+            conn.close()
+            return True
+    except ValueError:
+        pass
+        
     return False
 
 def hand_value(hand):
@@ -56,81 +77,65 @@ def hand_value(hand):
         aces -= 1
     return value
 
-# --- Команды ---
+# --- Команды (теперь на английском!) ---
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
-    balance = user[1]
-    text = (
-        "🎰 Добро пожаловать в казино!\n\n"
-        f"💰 Твой баланс: {balance} фишек\n\n"
-        "Доступные команды:\n"
-        "/start — это сообщение\n"
-        "/balance — проверить баланс\n"
-        "/bonus — получить ежедневный бонус (200 фишек)\n"
-        "/рулетка <ставка> <вариант> — рулетка\n"
-        "/блэкджек <ставка> — блэкджек\n"
-        "/слоты <ставка> — слоты\n"
-        "/карта <ставка> <выше|ниже> — карта выше/ниже\n"
-        "/монетка <ставка> <орёл|решка> — орёл и решка\n\n"
-        "Примеры:\n"
-        "/рулетка 100 красное\n"
-        "/слоты 50\n"
-        "/монетка 100 орёл"
+    await update.message.reply_text(
+        f"👋 Привет, {update.effective_user.first_name}!\n"
+        f"💰 Твой баланс: {user} фишек.\n\n"
+        f"Доступные игры (пиши команды на английском):\n"
+        f"/roulette - рулетка\n"
+        f"/blackjack - блэкджек\n"
+        f"/slots - слоты\n"
+        f"/card - угадай карту (выше/ниже)\n"
+        f"/coin - монетка\n\n"
+        f"💵 /balance - баланс\n"
+        f"🎁 /bonus - ежедневный бонус"
     )
-    await update.message.reply_text(text)
 
 async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
-    await update.message.reply_text(f"💰 Твой баланс: {user[1]} фишек.")
+    await update.message.reply_text(f"💰 Твой текущий баланс: {user} фишек.")
 
 async def bonus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if give_bonus(update.effective_user.id):
-        user = get_user(update.effective_user.id)
-        await update.message.reply_text(f"🎁 Бонус получен! +200 фишек.\n💰 Твой баланс: {user[1]} фишек.")
+        await update.message.reply_text("🎁 Бонус 200 фишек начислен! Следующий через 24 часа.")
     else:
-        await update.message.reply_text("⏰ Бонус уже получен. Возвращайся через 24 часа!")
-
-# --- Игры ---
+        await update.message.reply_text("⏳ Бонус уже получен. Подожди 24 часа.")
 
 async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 2:
-        await update.message.reply_text(
-            "🎰 Рулетка: поставь ставку и выбери вариант.\n"
-            "Примеры:\n"
-            "/рулетка 100 красное\n"
-            "/рулетка 50 чёт\n"
-            "/рулетка 25 17"
-        )
+        await update.message.reply_text("🎰 Рулетка: поставь ставку и выбери вариант.\nПримеры:\n`roulette 100 red`\n`roulette 50 even`\n`roulette 25 17`", parse_mode='Markdown')
         return
     try:
-        bet = int(msg[1])
+        bet = int(msg)
     except ValueError:
         await update.message.reply_text("❌ Укажи корректную ставку числом.")
         return
 
     user = get_user(update.effective_user.id)
-    if user[1] < bet:
+    if user < bet:
         await update.message.reply_text("💸 Недостаточно фишек!")
         return
 
     target = " ".join(msg[2:]).lower()
     number = random.randint(0, 36)
-    color = "зелёный" if number == 0 else ("красный" if number in [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36] else "чёрный")
+    color = "green" if number == 0 else ("red" if number in [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36] else "black")
     is_even = (number % 2 == 0) if number != 0 else False
     range_1_18 = 1 <= number <= 18
 
     win = False
     payout = 0
 
-    if target in ["красное", "красный"] and color == "красный":
+    if target in ["red", "красный", "красное"] and color == "red":
         win = True; payout = 2
-    elif target in ["чёрное", "черный"] and color == "чёрный":
+    elif target in ["black", "чёрный", "черный"] and color == "black":
         win = True; payout = 2
-    elif target == "чёт" and is_even:
+    elif target == "even" and is_even:
         win = True; payout = 2
-    elif target == "нечёт" and not is_even and number != 0:
+    elif target == "odd" and not is_even and number != 0:
         win = True; payout = 2
     elif target == "1-18" and range_1_18:
         win = True; payout = 2
@@ -153,16 +158,16 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 2:
-        await update.message.reply_text("🃏 Блэкджек: укажи ставку.\nПример: /блэкджек 100")
+        await update.message.reply_text("🃏 Блэкджек: укажи ставку.\nПример: `blackjack 100`", parse_mode='Markdown')
         return
     try:
-        bet = int(msg[1])
+        bet = int(msg)
     except ValueError:
         await update.message.reply_text("❌ Ставка должна быть числом.")
         return
 
     user = get_user(update.effective_user.id)
-    if user[1] < bet:
+    if user < bet:
         await update.message.reply_text("💸 Не хватает фишек.")
         return
 
@@ -172,48 +177,64 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dealer_hand = [deck.pop(), deck.pop()]
 
     p_val = hand_value(player_hand)
+    d_val = hand_value(dealer_hand)
 
     if p_val == 21:
-        update_balance(update.effective_user.id, int(bet * 1.5))
-        await update.message.reply_text(f"🃏 Натуральный блэкджек! Ты получил {int(bet*1.5)} фишек!")
+        winnings = int(bet * 1.5)
+        update_balance(update.effective_user.id, winnings)
+        await update.message.reply_text(f"🃏 Натуральный блэкджек! Ты получил {winnings} фишек!")
         return
 
     keyboard = [
-        [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_hand[0]}")],
-        [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_hand[0]}")]
+        [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_hand}")],
+        [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_hand}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        f"🃏 Твои карты: {player_hand} (сумма: {p_val})\nДилер: [{dealer_hand[0]}, ?]\nВыбери действие:",
+        f"🃏 Твои карты: {player_hand} (сумма: {p_val})\nДилер: [{dealer_hand}, ?]\nВыбери действие:",
         reply_markup=reply_markup
     )
 
 async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
     data = query.data.split("_")
-    action, bet_str, p_val_str, dealer_first = data[1], data[2], data[3], data[4]
-    bet = int(bet_str)
-    p_val = int(p_val_str)
-    user_id = update.effective_user.id
+    if len(data) < 5:
+        await query.edit_message_text("❌ Ошибка сессии. Начни игру заново.")
+        return
 
+    action, bet_str, p_val_str, dealer_first = data, data, data, data
+    
+    try:
+        bet = int(bet_str)
+        p_val = int(p_val_str)
+    except ValueError:
+        await query.edit_message_text("❌ Ошибка данных. Начни игру заново.")
+        return
+
+    user_id = update.effective_user.id
     deck = [i for i in range(1, 14)] * 4
     random.shuffle(deck)
+    
     dealer_hand = [int(dealer_first), deck.pop()]
-
+    
     if action == "hit":
         new_card = deck.pop()
-        p_val += 11 if new_card == 1 else (10 if new_card > 10 else new_card)
+        card_val = 11 if new_card == 1 else (10 if new_card > 10 else new_card)
+        p_val += card_val
+        
         if p_val > 21:
             update_balance(user_id, -bet)
-            await query.edit_message_text(f"🃏 Перебор! Ты потерял {bet} фишек.")
+            await query.edit_message_text(f"🃏 Перебор ({p_val})! Ты потерял {bet} фишек.")
             return
+            
         keyboard = [
-            [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_hand[0]}")],
-            [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_hand[0]}")]
+            [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_hand}")],
+            [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_hand}")]
         ]
         await query.edit_message_text(
-            f"🃏 Твоя сумма: {p_val}. Дилер: [{dealer_hand[0]}, ?]\nЧто делаешь?",
+            f"🃏 Твоя сумма: {p_val}. Дилер: [{dealer_hand}, ?]\nЧто делаешь?",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
@@ -240,36 +261,33 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
 async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 2:
-        await update.message.reply_text(
-            "🎲 Слоты: поставь ставку.\nПример: /слоты 50\n"
-            "Выплаты: 🍓x3, 🍋x4, 🔔x5, ⭐x10, 💎x20, 7️⃣x50"
-        )
+        await update.message.reply_text("🎲 Слоты: поставь ставку.\nПример: `slots 50`\nВыплаты: 🍒x3, 🍋x4, 🔔x5, ⭐x10, 💎x20, 7️⃣x50", parse_mode='Markdown')
         return
     try:
-        bet = int(msg[1])
+        bet = int(msg)
     except ValueError:
         await update.message.reply_text("❌ Ставка числом.")
         return
 
     user = get_user(update.effective_user.id)
-    if user[1] < bet:
+    if user < bet:
         await update.message.reply_text("💸 Мало фишек.")
         return
 
-    symbols = ["🍓", "🍋", "🔔", "⭐", "💎", "7️⃣"]
+    symbols = ["🍒", "🍋", "🔔", "⭐", "💎", "7️⃣"]
     reels = [random.choice(symbols) for _ in range(3)]
-
-    payout_map = {"🍓":3, "🍋":4, "🔔":5, "⭐":10, "💎":20, "7️⃣":50}
+    
+    payout_map = {"🍒":3, "🍋":4, "🔔":5, "⭐":10, "💎":20, "7️⃣":50}
     winnings = 0
-    if reels[0] == reels[1] == reels[2]:
-        winnings = bet * payout_map[reels[0]]
-    elif reels[0] == reels[1] or reels[1] == reels[2] or reels[0] == reels[2]:
+    if reels == reels == reels:
+        winnings = bet * payout_map[reels]
+    elif reels == reels or reels == reels or reels == reels:
         winnings = bet
 
     net = winnings - bet
     update_balance(update.effective_user.id, net)
-
-    text = f"🎲 {reels[0]} {reels[1]} {reels[2]}\n"
+    
+    text = f"🎲 {reels} {reels} {reels}\n"
     if net > 0:
         text += f"🎉 Выигрыш: {net} фишек!"
     elif net == 0:
@@ -281,20 +299,17 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 3:
-        await update.message.reply_text(
-            "🃟 Карта выше/ниже: укажи ставку и выбор.\n"
-            "Пример: /карта 100 выше или /карта 100 ниже"
-        )
+        await update.message.reply_text("🃟 Карта выше/ниже: укажи ставку и выбор.\nПример: `card 100 higher` или `card 100 lower`", parse_mode='Markdown')
         return
     try:
-        bet = int(msg[1])
-        choice = msg[2].lower()
+        bet = int(msg)
+        choice = msg.lower()
     except ValueError:
         await update.message.reply_text("❌ Неверный формат.")
         return
 
     user = get_user(update.effective_user.id)
-    if user[1] < bet:
+    if user < bet:
         await update.message.reply_text("💸 Нет фишек.")
         return
 
@@ -303,9 +318,9 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = cards.pop()
     next_card = cards.pop()
 
-    won = (choice == "выше" and next_card > current) or (choice == "ниже" and next_card < current)
+    won = (choice == "higher" and next_card > current) or (choice == "lower" and next_card < current)
     multiplier = 1.8
-
+    
     if won:
         winnings = int(bet * (multiplier - 1))
         update_balance(update.effective_user.id, winnings)
@@ -314,56 +329,52 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_balance(update.effective_user.id, -bet)
         await update.message.reply_text(f"🃟 Текущая: {current}, следующая: {next_card}\n😞 Не угадал. -{bet} фишек.")
 
-async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def coin_cmd(update: Update, ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 3:
-        await update.message.reply_text("🪙 Монетка: ставка и сторона.\nПример: /монетка 100 орёл")
+        await update.message.reply_text("🪙 Монетка: ставка и сторона.\nПример: `coin 100 heads` (heads/tails)", parse_mode='Markdown')
         return
     try:
-        bet = int(msg[1])
-        choice = msg[2].lower()
+        bet = int(msg)
+        choice = msg.lower()
     except ValueError:
         await update.message.reply_text("❌ Ошибка формата.")
         return
 
     user = get_user(update.effective_user.id)
-    if user[1] < bet:
+    if user < bet:
         await update.message.reply_text("💸 Фишек нет.")
         return
 
-    side = random.choice(["орёл", "решка"])
+    side = random.choice(["heads", "tails"])
     if choice == side:
         winnings = int(bet * 0.8)
         update_balance(update.effective_user.id, winnings)
-        await update.message.reply_text(f"🪙 Выпало: {side}\n🎉 Ты угадал! +{winnings} фишек.")
+        await update.message.reply_text(f"🪙 Выпало: {side}\n🎉 Победа! Ты выиграл {winnings} фишек.")
     else:
         update_balance(update.effective_user.id, -bet)
-        await update.message.reply_text(f"🪙 Выпало: {side}\n😞 Не угадал. -{bet} фишек.")
-
-# --- Запуск ---
+        await update.message.reply_text(f"🪙 Выпало: {side}\n😞 Проигрыш. Ты потерял {bet} фишек.")
 
 def main():
     token = os.getenv("BOT_TOKEN")
     
-    # Безопасная проверка
     if not token:
         print("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN пуста!")
-        print("👉 Проверь панель хостинга и нажми СОХРАНИТЬ переменные!")
         return
 
-    print(f"✅ Токен найден (первые 5 символов: {token[:5]}...)")
+    print(f"✅ Токен найден. Запуск бота...")
     
     application = ApplicationBuilder().token(token).build()
 
-    # Команды (обрати внимание: ключи - это ТЕКСТ команды в Telegram, без слэша)
-    application.add_handler(CommandHandler("start", start_cmd))       # Нужно добавить функцию start_cmd!
-    application.add_handler(CommandHandler("рулетка", roulette_cmd))
-    application.add_handler(CommandHandler("блэкджек", blackjack_cmd))
-    application.add_handler(CommandHandler("слоты", slots_cmd))
-    application.add_handler(CommandHandler("карта", card_cmd))
-    application.add_handler(CommandHandler("монетка", coin_cmd))
-    application.add_handler(CommandHandler("баланс", balance_cmd))    # Нужно добавить функцию balance_cmd!
-    application.add_handler(CommandHandler("бонус", bonus_cmd))        # Нужно добавить функцию bonus_cmd!
+    # Регистрируем команды ТОЛЬКО на английском
+    application.add_handler(CommandHandler("start", start_cmd))
+    application.add_handler(CommandHandler("roulette", roulette_cmd))
+    application.add_handler(CommandHandler("blackjack", blackjack_cmd))
+    application.add_handler(CommandHandler("slots", slots_cmd))
+    application.add_handler(CommandHandler("card", card_cmd))
+    application.add_handler(CommandHandler("coin", coin_cmd))
+    application.add_handler(CommandHandler("balance", balance_cmd))
+    application.add_handler(CommandHandler("bonus", bonus_cmd))
 
     application.add_handler(CallbackQueryHandler(handle_blackjack_callback))
 
@@ -373,3 +384,4 @@ def main():
 if __name__ == "__main__":
     init_db()
     main()
+
