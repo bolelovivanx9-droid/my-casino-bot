@@ -19,6 +19,7 @@ load_dotenv()
 DB_NAME = "casino.db"
 
 def init_db():
+    """Инициализация БД и создание таблицы, если её нет."""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users (
@@ -33,30 +34,46 @@ def init_db():
     logger.info("✅ База данных инициализирована.")
 
 def get_user(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    # Сначала убедимся, что пользователь есть в базе
-    c.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
-    c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-    user = c.fetchone()
-    conn.close()
-    return user
+    """Получает данные пользователя. Возвращает кортеж или None."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        # Гарантируем наличие пользователя в базе
+        c.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+        c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        user = c.fetchone()
+        conn.close()
+        return user
+    except Exception as e:
+        logger.error(f"Ошибка при получении пользователя {user_id}: {e}")
+        return None
 
 def update_balance(user_id, amount):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
-    conn.commit()
-    conn.close()
+    """Обновляет баланс. amount может быть положительным или отрицательным."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+        conn.commit()
+        conn.close()
+        logger.debug(f"Баланс пользователя {user_id} изменен на {amount}")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка обновления баланса для {user_id}: {e}")
+        return False
 
 def give_bonus(user_id):
+    """Выдает ежедневный бонус 200 фишек. Возвращает True, если бонус выдан."""
     now = datetime.now()
     user = get_user(user_id)
     
-    # user = (user_id, balance, last_bonus, wins, losses)
-    # last_bonus находится по индексу 2
-    last_bonus_str = user 
+    if not user:
+        return False
+
+    # user структура: (user_id, balance, last_bonus, wins, losses)
+    last_bonus_str = user
     
+    # Если бонуса никогда не было
     if last_bonus_str is None:
         update_balance(user_id, 200)
         conn = sqlite3.connect(DB_NAME)
@@ -77,12 +94,20 @@ def give_bonus(user_id):
             conn.close()
             return True
     except ValueError:
-        # Если дата в базе в неверном формате, считаем, что бонуса не было
-        pass
+        logger.warning(f"Неверный формат даты в БД для пользователя {user_id}. Сброс таймера.")
+        # Если дата битая, считаем, что можно дать бонус
+        update_balance(user_id, 200)
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (now.isoformat(), user_id))
+        conn.commit()
+        conn.close()
+        return True
         
     return False
 
 def hand_value(hand):
+    """Подсчет очков в блэкджеке."""
     value = 0
     aces = sum(1 for c in hand if c == 1)
     for c in hand:
@@ -94,26 +119,39 @@ def hand_value(hand):
         aces -= 1
     return value
 
-# --- Команды ---
+# --- КОМАНДЫ ---
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user(update.effective_user.id)
-    # user - это баланс
+    user_id = update.effective_user.id
+    user = get_user(user_id)
+
+    if not user:
+        await update.message.reply_text("⚠️ Произошла критическая ошибка профиля. Попробуй нажать /start еще раз.")
+        return
+
+    # user — это баланс (второе поле кортежа)
+    balance = user
+
     await update.message.reply_text(
         f"👋 Привет, {update.effective_user.first_name}!\n"
-        f"💰 Твой баланс: {user} фишек.\n\n"
-        f"Доступные игры (команды на английском):\n"
+        f"💰 Твой баланс: {balance} фишек.\n\n"
+        f"Доступные игры:\n"
         f"/roulette - рулетка\n"
         f"/blackjack - блэкджек\n"
         f"/slots - слоты\n"
         f"/card - угадай карту (выше/ниже)\n"
         f"/coin - монетка\n\n"
-        f"💵 /balance - баланс\n"
+        f"💵 /balance - проверить баланс\n"
         f"🎁 /bonus - ежедневный бонус"
     )
 
 async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("⚠️ Ошибка профиля.")
+        return
+    
+    # user — баланс
     await update.message.reply_text(f"💰 Твой текущий баланс: {user} фишек.")
 
 async def bonus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,17 +169,20 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         bet = int(msg)
     except ValueError:
-        await update.message.reply_text("❌ Укажи корректную ставку числом.")
+        await update.message.reply_text("❌ Укажи корректную ставку числом (например, `/roulette 100 red`).")
         return
 
     user = get_user(update.effective_user.id)
-    if user < bet:
+    if not user or user < bet:
         await update.message.reply_text("💸 Недостаточно фишек!")
         return
 
     target = " ".join(msg[2:]).lower()
     number = random.randint(0, 36)
-    color = "green" if number == 0 else ("red" if number in [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36] else "black")
+    
+    # Определение цвета и свойств числа
+    red_numbers = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
+    color = "green" if number == 0 else ("red" if number in red_numbers else "black")
     is_even = (number % 2 == 0) if number != 0 else False
     range_1_18 = 1 <= number <= 18
 
@@ -187,31 +228,39 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = get_user(update.effective_user.id)
-    if user < bet:
+    if not user or user < bet:
         await update.message.reply_text("💸 Не хватает фишек.")
         return
 
+    # Создаем новую колоду для каждой игры
     deck = [i for i in range(1, 14)] * 4
     random.shuffle(deck)
+    
     player_hand = [deck.pop(), deck.pop()]
     dealer_hand = [deck.pop(), deck.pop()]
 
     p_val = hand_value(player_hand)
     d_val = hand_value(dealer_hand)
 
+    # Проверка на натуральный блэкджек
     if p_val == 21:
         winnings = int(bet * 1.5)
         update_balance(update.effective_user.id, winnings)
         await update.message.reply_text(f"🃏 Натуральный блэкджек! Ты получил {winnings} фишек!")
         return
 
-    # Передаем только первую карту дилера в callback_data
-    # Формат: bj_action_bet_p_val_dealer_first
+    # Сохраняем состояние игры в callback_data
+    # Формат: bj_game_bet_p_hand_d_first
+    # Мы не можем передать весь список в callback_data легко, поэтому передаем строку карт
+    p_hand_str = ",".join(map(str, player_hand))
+    d_first_str = str(dealer_hand)
+    
     keyboard = [
-        [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_hand}")],
-        [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_hand}")]
+        [InlineKeyboardButton("🃏 Ещё карту", callback_data=f"bj_hit_{bet}_{p_hand_str}_{d_first_str}")],
+        [InlineKeyboardButton("✋ Хватит", callback_data=f"bj_stand_{bet}_{p_hand_str}_{d_first_str}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    
     await update.message.reply_text(
         f"🃏 Твои карты: {player_hand} (сумма: {p_val})\nДилер: [{dealer_hand}, ?]\nВыбери действие:",
         reply_markup=reply_markup
@@ -222,7 +271,7 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
     
     data = query.data.split("_")
-    # Ожидаемый формат: bj_hit_bet_p_val_dealer_first
+    # Ожидаемый формат: bj_hit/stand_bet_p_hand_str_d_first_str
     if len(data) < 5:
         await query.edit_message_text("❌ Ошибка сессии. Начни игру заново.")
         return
@@ -230,31 +279,47 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
     action = data # hit или stand
     try:
         bet = int(data)
-        p_val = int(data)
-        dealer_first = int(data)
-    except ValueError:
+        p_hand_str = data
+        d_first_str = data
+        
+        player_hand = list(map(int, p_hand_str.split(",")))
+        dealer_first = int(d_first_str)
+    except (ValueError, IndexError):
         await query.edit_message_text("❌ Ошибка данных. Начни игру заново.")
         return
 
     user_id = update.effective_user.id
+    
+    # Пересоздаем колоду, но нам нужно знать, какие карты уже вышли.
+    # Для упрощения в этом коде: мы не можем точно восстановить колоду по callback_data без хранения состояния в БД/Redis.
+    # ХАК ДЛЯ ПРОСТОТЫ: В этой версии бота мы будем считать, что остальные карты в колоде случайны.
+    # Это не идеально для честной игры, но работает без сложной архитектуры.
+    # Для идеального решения нужно хранить ID игры в БД.
+    
+    # Создаем новую колоду и убираем из неё известные карты
     deck = [i for i in range(1, 14)] * 4
+    for card in player_hand:
+        if card in deck: deck.remove(card)
+    if dealer_first in deck: deck.remove(dealer_first)
     random.shuffle(deck)
     
     dealer_hand = [dealer_first, deck.pop()]
     
     if action == "hit":
         new_card = deck.pop()
-        card_val = 11 if new_card == 1 else (10 if new_card > 10 else new_card)
-        p_val += card_val
+        player_hand.append(new_card)
+        p_val = hand_value(player_hand)
         
         if p_val > 21:
             update_balance(user_id, -bet)
             await query.edit_message_text(f"🃏 Перебор ({p_val})! Ты потерял {bet} фишек.")
             return
             
+        # Обновляем клавиатуру с новыми данными
+        p_hand_str_new = ",".join(map(str, player_hand))
         keyboard = [
-            [InlineKeyboardButton("Ещё", callback_data=f"bj_hit_{bet}_{p_val}_{dealer_first}")],
-            [InlineKeyboardButton("Хватит", callback_data=f"bj_stand_{bet}_{p_val}_{dealer_first}")]
+            [InlineKeyboardButton("🃏 Ещё карту", callback_data=f"bj_hit_{bet}_{p_hand_str_new}_{d_first_str}")],
+            [InlineKeyboardButton("✋ Хватит", callback_data=f"bj_stand_{bet}_{p_hand_str_new}_{d_first_str}")]
         ]
         await query.edit_message_text(
             f"🃏 Твоя сумма: {p_val}. Дилер: [{dealer_first}, ?]\nЧто делаешь?",
@@ -264,16 +329,21 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
 
     # Логика дилера (stand)
     while hand_value(dealer_hand) < 17:
+        if not deck: break # Защита от пустой колоды
         dealer_hand.append(deck.pop())
+    
     d_val = hand_value(dealer_hand)
+    p_val = hand_value(player_hand)
 
-    msg = f"🃏 Дилер: {dealer_hand} (сумма: {d_val})\nТы: сумма была {p_val}\n"
+    msg = f"🃏 Дилер: {dealer_hand} (сумма: {d_val})\nТы: {player_hand} (сумма: {p_val})\n\n"
+    
     if p_val > 21:
         msg += "😞 Перебор — проигрыш."
         update_balance(user_id, -bet)
     elif d_val > 21 or p_val > d_val:
-        msg += f"🎉 Победа! +{bet} фишек."
-        update_balance(user_id, bet)
+        winnings = bet
+        msg += f"🎉 Победа! +{winnings} фишек."
+        update_balance(user_id, winnings)
     elif p_val < d_val:
         msg += "😞 Дилер выиграл."
         update_balance(user_id, -bet)
@@ -291,11 +361,11 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         bet = int(msg)
     except ValueError:
-        await update.message.reply_text("❌ Ставка числом.")
+        await update.message.reply_text("❌ Ставка должна быть числом.")
         return
 
     user = get_user(update.effective_user.id)
-    if user < bet:
+    if not user or user < bet:
         await update.message.reply_text("💸 Мало фишек.")
         return
 
@@ -305,7 +375,7 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payout_map = {"🍒":3, "🍋":4, "🔔":5, "⭐":10, "💎":20, "7️⃣":50}
     winnings = 0
     
-    # Исправленная логика: сравниваем элементы списка по индексам
+    # ИСПРАВЛЕННАЯ ЛОГИКА: сравнение по индексам
     if reels == reels == reels:
         winnings = bet * payout_map[reels]
     elif reels == reels or reels == reels or reels == reels:
@@ -323,7 +393,7 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "😞 Проигрыш."
     await update.message.reply_text(text)
 
-async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def card_cmd(update: Update, ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
     if len(msg) < 3:
         await update.message.reply_text("🃟 Карта выше/ниже: укажи ставку и выбор.\nПример: `/card 100 higher` или `/card 100 lower`", parse_mode='Markdown')
@@ -333,11 +403,11 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bet = int(msg)
         choice = msg.lower()
     except ValueError:
-        await update.message.reply_text("❌ Неверный формат.")
+        await update.message.reply_text("❌ Неверный формат. Используй: `/card 100 higher`")
         return
 
     user = get_user(update.effective_user.id)
-    if user < bet:
+    if not user or user < bet:
         await update.message.reply_text("💸 Нет фишек.")
         return
 
@@ -371,7 +441,7 @@ async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = get_user(update.effective_user.id)
-    if user < bet:
+    if not user or user < bet:
         await update.message.reply_text("💸 Фишек нет.")
         return
 
@@ -396,6 +466,7 @@ def main():
     
     application = ApplicationBuilder().token(token).build()
 
+    # Регистрация всех команд
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("roulette", roulette_cmd))
     application.add_handler(CommandHandler("blackjack", blackjack_cmd))
@@ -405,6 +476,7 @@ def main():
     application.add_handler(CommandHandler("balance", balance_cmd))
     application.add_handler(CommandHandler("bonus", bonus_cmd))
 
+    # Обработчик нажатий на кнопки в блэкджеке
     application.add_handler(CallbackQueryHandler(handle_blackjack_callback))
 
     logger.info("🚀 Бот запускается и начинает слушать Telegram...")
