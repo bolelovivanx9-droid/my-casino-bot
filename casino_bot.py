@@ -309,3 +309,30 @@ async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if choice == side:
         winnings = int(bet * 0.8)
         update_balance(update.effective_user.id, winnings)
+from telegram.ext import ApplicationBuilder
+import os
+
+def main():
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        raise ValueError("BOT_TOKEN не найден!")
+
+    application = ApplicationBuilder().token(token).build()
+
+    # Регистрируем команды
+    application.add_handler(CommandHandler("roulette", roulette_cmd))
+    application.add_handler(CommandHandler("blackjack", blackjack_cmd))
+    application.add_handler(CommandHandler("slots", slots_cmd))
+    application.add_handler(CommandHandler("card", card_cmd))
+    application.add_handler(CommandHandler("coin", coin_cmd))
+
+    # Обработчик колбэков (кнопки)
+    from telegram.ext import CallbackQueryHandler
+    application.add_handler(CallbackQueryHandler(handle_blackjack_callback))
+
+    print("🚀 Бот запускается...")
+    application.run_polling()
+
+if __name__ == "__main__":
+    init_db()  # создаём базу при старте
+    main()
