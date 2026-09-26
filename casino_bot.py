@@ -14,8 +14,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Загружаем переменные из .env (если есть) и из настроек платформы
 load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    logger.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN не найдена!")
+    logger.error("Проверь настройки переменных окружения в панели хостинга.")
+    raise ValueError("Токен бота не установлен!")
+else:
+    logger.info("✅ Токен успешно загружен.")
+# -------------------------------------------------------
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
