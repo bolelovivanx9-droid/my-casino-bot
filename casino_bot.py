@@ -4,6 +4,31 @@ import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
+from dotenv import load_dotenv
+import logging
+
+# Включаем логирование, чтобы видеть ошибки в консоли
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Загружаем переменные из .env (если есть) и из настроек платформы
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    # Эта ошибка гарантированно появится в логах, если токена нет
+    logger.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN не найдена!")
+    logger.error("Проверь настройки переменных окружения в панели хостинга.")
+    raise ValueError("Токен бота не установлен!")
+else:
+    logger.info("✅ Токен успешно загружен.")
+# 👆 ВСТАВЛЯТЬ ДО СЮДА 👆
+
+DB_NAME = "casino.db"
 
 DB_NAME = "casino.db"
 
