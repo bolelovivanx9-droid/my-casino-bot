@@ -197,39 +197,55 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text.split()
-    if len(msg) < 3:
-        await update.message.reply_text("🎰 Рулетка: поставь ставку и выбери вариант.\nПример: /рулетка 100 красный")
-        return
     try:
-        bet = int(msg[1])
+        msg = update.message.text.split()
+        if len(msg) < 3:
+            await update.message.reply_text("Рулетка: поставь ставку и выбери вариант.\nПример: /рулетка 100 красный")
+            return
+
+        bet = int(msg)
     except ValueError:
         await update.message.reply_text("❌ Ставка должна быть числом.")
         return
+
     user = get_user(update.effective_user.id)
     if not user or user["balance"] < bet:
-        await update.message.reply_text("💸 Недостаточно фишек!")
+        await update.message.reply_text("❌ Недостаточно фишек!")
         return
+
     target = " ".join(msg[2:]).lower()
-   await send_animation(update, ANIMATION_ROULETTE)
-    await update.message.reply_text("🌀 Крутим колесо...")
+
+    # ЭТА СТРОКА ТЕПЕРЬ НА ПРАВИЛЬНОМ УРОВНЕ ОТСТУПА (ровно как и return выше)
+    await send_animation(update, ANIMATION_ROULETTE)
+
+    await update.message.reply_text("🌀 Крутим колесо…")
+
     number = random.randint(0, 36)
     red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
     color = "green" if number == 0 else ("red" if number in red_numbers else "black")
+
     color_map = {"красный": "red", "чёрный": "black", "черный": "black"}
     check_color = color_map.get(target, target)
+
     win = False
     payout = 0
+
     if check_color == "red" and color == "red":
-        win = True; payout = 2
+        win = True
+        payout = 2
     elif check_color == "black" and color == "black":
-        win = True; payout = 2
+        win = True
+        payout = 2
     elif target in ["even", "чётное", "четное"] and number != 0 and number % 2 == 0:
-        win = True; payout = 2
+        win = True
+        payout = 2
     elif target in ["odd", "нечётное", "нечетное"] and number != 0 and number % 2 != 0:
-        win = True; payout = 2
+        win = True
+        payout = 2
     elif target.isdigit() and int(target) == number:
-        win = True; payout = 36
+        win = True
+        payout = 36
+
     result_text = f"🎱 Выпало: {number} ({color})\n"
     if win:
         winnings = bet * (payout - 1)
