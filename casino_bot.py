@@ -26,7 +26,7 @@ load_dotenv()
 DB_NAME = "casino.db"
 ADMIN_ID = 8762706702
 
-# ID анимаций
+# ID анимаций (видео MP4)
 ANIMATION_ROULETTE = "AAMCAQADGQEDmF9marjABoVRagHwqE0_Ub4xe4BsfesAAtsGAAKghpBFwi-Q2tzYUAIBAAdtAAM9BA"
 ANIMATION_SLOTS = "AgADHQsAAu_tpFA"
 ANIMATION_COIN = "AgADZwcAAtnSJVE"
@@ -61,8 +61,10 @@ PROMOCODES = {
 
 # --- КВЕСТЫ ---
 QUESTS = [
+    # Лёгкие (2)
     {"id": 1, "desc": "Сыграй первую игру", "reward": 200, "check": lambda s: s["total_games"] >= 1},
     {"id": 2, "desc": "Получи ежедневный бонус", "reward": 300, "check": lambda s: s["bonus_claimed"] >= 1},
+    # Средние (10)
     {"id": 3, "desc": "Сыграй 10 игр", "reward": 500, "check": lambda s: s["total_games"] >= 10},
     {"id": 4, "desc": "Победи 5 раз", "reward": 700, "check": lambda s: s["wins"] >= 5},
     {"id": 5, "desc": "Сыграй в 3 разные игры", "reward": 600, "check": lambda s: len(s["games_played"]) >= 3},
@@ -73,9 +75,10 @@ QUESTS = [
     {"id": 10, "desc": "Сыграй в слоты 5 раз", "reward": 500, "check": lambda s: s["slots_plays"] >= 5},
     {"id": 11, "desc": "Выиграй в монетку", "reward": 400, "check": lambda s: s["coin_wins"] >= 1},
     {"id": 12, "desc": "Сыграй 20 игр", "reward": 1000, "check": lambda s: s["total_games"] >= 20},
+    # Нереально сложные (8)
     {"id": 13, "desc": "Победи 50 раз", "reward": 5000, "check": lambda s: s["wins"] >= 50},
     {"id": 14, "desc": "Выиграй 10000 AceCoin за одну ставку", "reward": 10000, "check": lambda s: s["biggest_win"] >= 10000},
-    {"id": 15, "desc": "Три 7\uufe0f\u20e3 в слотах", "reward": 15000, "check": lambda s: s["slots_jackpot"] >= 1},
+    {"id": 15, "desc": "Три семёрки (7) в слотах", "reward": 15000, "check": lambda s: s["slots_jackpot"] >= 1},
     {"id": 16, "desc": "Выиграй в блэкджек 10 раз", "reward": 8000, "check": lambda s: s["blackjack_wins"] >= 10},
     {"id": 17, "desc": "Сыграй 100 игр", "reward": 10000, "check": lambda s: s["total_games"] >= 100},
     {"id": 18, "desc": "Выиграй 50000 AceCoin суммарно", "reward": 20000, "check": lambda s: s["total_won"] >= 50000},
@@ -97,6 +100,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+    # Миграция: добавляем колонки для статистики
     migrate_columns = [
         ("total_games", "INTEGER DEFAULT 0"),
         ("total_won", "INTEGER DEFAULT 0"),
@@ -125,11 +129,13 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # Таблица использованных промокодов
     c.execute("""CREATE TABLE IF NOT EXISTS promocodes_used (
         code TEXT PRIMARY KEY,
         user_id INTEGER,
         used_at TIMESTAMP
     )""")
+    # Таблица выполненных квестов
     c.execute("""CREATE TABLE IF NOT EXISTS quests_completed (
         user_id INTEGER,
         quest_id INTEGER,
@@ -153,7 +159,7 @@ def get_user(user_id):
         conn.close()
         return user
     except Exception as e:
-        logger.error(f"get_user: {e}")
+        logger.error(f"Ошибка get_user: {e}")
         return None
 
 
@@ -170,7 +176,7 @@ def update_balance(user_id, amount):
             return row[0]
         return None
     except Exception as e:
-        logger.error(f"update_balance: {e}")
+        logger.error(f"Ошибка update_balance: {e}")
         return None
 
 
@@ -183,6 +189,7 @@ def update_stats(user_id, game_type, won, amount_won):
         if not user:
             conn.close()
             return
+
         col_names = [desc[0] for desc in c.description]
         stats = dict(zip(col_names, user))
 
@@ -191,18 +198,29 @@ def update_stats(user_id, game_type, won, amount_won):
         wins = stats.get("wins", 0) + (1 if won else 0)
         losses = stats.get("losses", 0) + (0 if won else 1)
         biggest_win = max(stats.get("biggest_win", 0), amount_won if won else 0)
-        current_streak = stats.get("current_streak", 0) + 1 if won else 0
+
+        current_streak = stats.get("current_streak", 0)
+        if won:
+            current_streak += 1
+        else:
+            current_streak = 0
         max_win_streak = max(stats.get("max_win_streak", 0), current_streak)
+
         games_played_str = stats.get("games_played", "") or ""
         if game_type not in games_played_str:
             games_played_str = (games_played_str + "," + game_type).strip(",")
 
         updates = {
-            "total_games": total_games, "total_won": total_won, "wins": wins,
-            "losses": losses, "biggest_win": biggest_win,
-            "current_streak": current_streak, "max_win_streak": max_win_streak,
+            "total_games": total_games,
+            "total_won": total_won,
+            "wins": wins,
+            "losses": losses,
+            "biggest_win": biggest_win,
+            "current_streak": current_streak,
+            "max_win_streak": max_win_streak,
             "games_played": games_played_str,
         }
+
         if game_type == "roulette":
             updates["roulette_plays"] = stats.get("roulette_plays", 0) + 1
         elif game_type == "blackjack":
@@ -222,20 +240,25 @@ def update_stats(user_id, game_type, won, amount_won):
         values = list(updates.values()) + [user_id]
         c.execute(f"UPDATE users SET {set_clause} WHERE user_id = ?", values)
         conn.commit()
+
         stats.update(updates)
 
         c.execute("SELECT quest_id FROM quests_completed WHERE user_id = ?", (user_id,))
-        completed_ids = set(row[0] for row in c.fetchall())
+        completed_rows = c.fetchall()
+        completed_ids = set(row[0] for row in completed_rows)
+
         for quest in QUESTS:
             if quest["id"] not in completed_ids and quest["check"](stats):
-                c.execute("INSERT OR IGNORE INTO quests_completed (user_id, quest_id, completed_at) VALUES (?, ?, ?)",
-                          (user_id, quest["id"], datetime.now().isoformat()))
+                c.execute(
+                    "INSERT OR IGNORE INTO quests_completed (user_id, quest_id, completed_at) VALUES (?, ?, ?)",
+                    (user_id, quest["id"], datetime.now().isoformat())
+                )
                 c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (quest["reward"], user_id))
                 conn.commit()
-                logger.info(f"Quest #{quest['id']} completed by {user_id}. Reward: {quest['reward']}")
+                logger.info(f"Квест #{quest['id']} выполнен пользователем {user_id}. Награда: {quest['reward']} AceCoin.")
         conn.close()
     except Exception as e:
-        logger.error(f"update_stats: {e}")
+        logger.error(f"Ошибка update_stats: {e}")
 
 
 def mark_slots_result(user_id, is_match, is_jackpot):
@@ -249,7 +272,7 @@ def mark_slots_result(user_id, is_match, is_jackpot):
         conn.commit()
         conn.close()
     except Exception as e:
-        logger.error(f"mark_slots_result: {e}")
+        logger.error(f"Ошибка mark_slots_result: {e}")
 
 
 def mark_natural_blackjack(user_id):
@@ -260,7 +283,7 @@ def mark_natural_blackjack(user_id):
         conn.commit()
         conn.close()
     except Exception as e:
-        logger.error(f"mark_natural_blackjack: {e}")
+        logger.error(f"Ошибка mark_natural_blackjack: {e}")
 
 
 def check_bonus_available(user_id):
@@ -284,7 +307,7 @@ def check_bonus_available(user_id):
             return True
         return False
     except Exception as e:
-        logger.error(f"check_bonus_available: {e}")
+        logger.error(f"Ошибка check_bonus_available: {e}")
         return True
 
 
@@ -300,13 +323,15 @@ def give_bonus_logic(user_id):
         c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
         new_bal = c.fetchone()
         conn.close()
+
         stats = get_user_stats_raw(user_id)
         if stats:
             stats["bonus_claimed"] = stats.get("bonus_claimed", 0) + 1
             check_quests(user_id, stats)
+
         return new_bal[0] if new_bal else None
     except Exception as e:
-        logger.error(f"give_bonus_logic: {e}")
+        logger.error(f"Ошибка give_bonus_logic: {e}")
         return None
 
 
@@ -322,7 +347,7 @@ def get_user_stats_raw(user_id):
             return dict(user)
         return None
     except Exception as e:
-        logger.error(f"get_user_stats_raw: {e}")
+        logger.error(f"Ошибка get_user_stats_raw: {e}")
         return None
 
 
@@ -331,17 +356,21 @@ def check_quests(user_id, stats):
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("SELECT quest_id FROM quests_completed WHERE user_id = ?", (user_id,))
-        completed_ids = set(row[0] for row in c.fetchall())
+        completed_rows = c.fetchall()
+        completed_ids = set(row[0] for row in completed_rows)
+
         for quest in QUESTS:
             if quest["id"] not in completed_ids and quest["check"](stats):
-                c.execute("INSERT OR IGNORE INTO quests_completed (user_id, quest_id, completed_at) VALUES (?, ?, ?)",
-                          (user_id, quest["id"], datetime.now().isoformat()))
+                c.execute(
+                    "INSERT OR IGNORE INTO quests_completed (user_id, quest_id, completed_at) VALUES (?, ?, ?)",
+                    (user_id, quest["id"], datetime.now().isoformat())
+                )
                 c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (quest["reward"], user_id))
                 conn.commit()
-                logger.info(f"Quest #{quest['id']} completed by {user_id}. Reward: {quest['reward']}")
+                logger.info(f"Квест #{quest['id']} выполнен пользователем {user_id}. Награда: {quest['reward']} AceCoin.")
         conn.close()
     except Exception as e:
-        logger.error(f"check_quests: {e}")
+        logger.error(f"Ошибка check_quests: {e}")
 
 
 def hand_value(hand):
@@ -364,284 +393,118 @@ async def send_animation(update, file_id):
     if not file_id:
         return
     try:
-        await update.effective_chat.send_video(video=file_id, supports_streaming=True)
-        logger.info(f"Animation {file_id[:10]}... sent.")
+        await update.effective_chat.send_video(
+            video=file_id,
+            supports_streaming=True,
+        )
+        logger.info(f"Анимация {file_id[:10]}... успешно отправлена.")
     except Exception as e:
-        logger.error(f"Animation error: {e}")
+        logger.error(f"Не удалось отправить анимацию {file_id[:10]}... Ошибка: {e}")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Unhandled error: {context.error}")
+    logger.error(f"Необработанная ошибка: {context.error}")
 
 
-# ========== START ==========
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
         user = get_user(user_id)
         if not user:
-            await update.message.reply_text("Error profile.")
+            await update.message.reply_text("Ошибка профиля.")
             return
 
-        name = update.effective_user.first_name or "Player"
+        # Сохраняем username
+        username = update.effective_user.username or ""
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
+        conn.commit()
+        conn.close()
+
+        name = update.effective_user.first_name or "Игрок"
         balance = user['balance']
 
-        # Сохраняем username
-        try:
-            uname = update.effective_user.username or ""
-            conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
-            c.execute("UPDATE users SET username = ? WHERE user_id = ?", (uname, user_id))
-            conn.commit()
-            conn.close()
-        except:
-            pass
-
         has_bonus = check_bonus_available(user_id)
+
         keyboard = []
         if has_bonus:
-            keyboard.append([InlineKeyboardButton("Gift Daily Bonus 200 AceCoin", callback_data="get_bonus")])
+            keyboard.append([InlineKeyboardButton("🎁 Забрать ежедневный бонус", callback_data="get_bonus")])
         keyboard.append([
-            InlineKeyboardButton("Help", callback_data="help_main"),
-            InlineKeyboardButton("Quests", callback_data="quests_list"),
-            InlineKeyboardButton("Top", callback_data="leaderboard"),
+            InlineKeyboardButton("❓ Помощь", callback_data="show_help"),
+            InlineKeyboardButton("📋 Квесты", callback_data="show_quests"),
+            InlineKeyboardButton("🏆 Топ", callback_data="show_top"),
         ])
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         text = (
-            f"\U0001f525 <b>  Ace Casino, {name}!</b> \U0001f525\n\n"
-            f"\U0001f4b5 <b>:</b> <code>{balance:,}</code> AceCoin\n"
-            f"\U0001f3af <b>Status:</b> Active Player\n\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f3b0 <b>GAMES & BETS</b>\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f3c0 <code>/roulette</code> - Bet on color or number (x36)\n"
-            f"\U0001f0cf <code>/blackjack</code> - Beat the dealer\n"
-            f"\U0001f3b2 <code>/slots</code> - Spin for the jackpot\n"
-            f"\U0001f3df <code>/card</code> - Higher or lower?\n"
-            f"\U0001fa99 <code>/coin</code> - Heads or tails!\n\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f4b8 <b>FINANCE & TRANSFERS</b>\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f4b1 <code>/p [amount]</code> - <b>Transfer to friend!</b>\n"
-            f"   \U0001f449 Reply to a message and write /p 500\n"
-            f"\U0001f194 <code>/id</code> - Your unique ID\n"
-            f"\U0001f4b0 <code>/balance</code> - Quick balance check\n"
-            f"\U0001f4ca <code>/stats</code> - Your statistics\n"
-            f"\U0001f3c6 <code>/top</code> - Leaderboard\n\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f380 <b>BONUSES & QUESTS</b>\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f3ab Enter promocodes in chat: <code>#STARTER</code>, <code>#LUCKY777</code>\n"
-            f"\U0001f5ed <code>/quests</code> - Quest list and rewards\n"
-            f"\U0001f4cc Daily bonus - don't forget to claim!\n\n"
-            f"\U0001f4a1 <b>Tip:</b> Start with the bonus to make your first bet risk-free!"
+            f"🔥 <b>Добро пожаловать в Ace Casino, {name}!</b> 🔥\n\n"
+            f"💵 <b>Твой баланс:</b> <code>{balance:,}</code> AceCoin\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎰 <b>ИГРЫ И СТАВКИ</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎡 <code>/рулетка</code> — Ставь на цвет или число (x36)\n"
+            f"🃏 <code>/блекджек</code> — Обыграй дилера и забери банк\n"
+            f"🎲 <code>/слоты</code> — Крути барабаны в поисках джекпота\n"
+            f"🃟 <code>/карта</code> — Угадай: следующая карта выше или ниже\n"
+            f"🪙 <code>/монетка</code> — Орёл или решка, рискни всем!\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💸 <b>ФИНАНСЫ И ПЕРЕВОДЫ</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💱 <code>/п [сумма]</code> — <b>Перевод другу!</b>\n"
+            f"   👉 <i>Ответь на сообщение игрока и напиши /п 500</i>\n"
+            f"🆔 <code>/id</code> — Узнай свой ID\n"
+            f"💰 <code>/б</code> — Быстрый просмотр баланса\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎁 <b>БОНУСЫ И КВЕСТЫ</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎫 Вводи промокоды прямо в чат: <code>#STARTER</code>, <code>#LUCKY777</code>\n"
+            f"🗺 <code>/кв</code> — Список квестов и награды\n"
+            f"📊 <code>/стат</code> — Твоя статистика\n"
+            f"🏆 <code>/топ</code> — Лидерборд казино\n"
+            f"📅 Не забудь забрать ежедневный бонус!\n\n"
+            f"💡 <b>Совет:</b> Начни с бонуса, чтобы сделать первую ставку без риска!"
         )
 
-        await update.message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
-    except Exception as e:
-        logger.error(f"start_cmd: {e}")
-
-
-# ========== HELP ==========
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        text = (
-            "\U0001f4d6 <b>ACE CASINO - </b>\U0001f4d6\n\n"
-            f"      AceCoin -      . "
-            f"      ,   ,  !\n\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f3b0 <b></b>\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
-            f"\U0001f3c0 <b></b> <code>/roulette [bet] [target]</code>\n"
-            f"   :   0  36.   :\n"
-            f"   \U0001f534  -  2\n"
-            f"   \U0001f7cf  -  2\n"
-            f"   \U0001f7e2  -  2\n"
-            f"    -  36\n"
-            f"  : <code>/roulette 100 </code>\n\n"
-            f"\U0001f0cf <b></b> <code>/blackjack [bet]</code>\n"
-            f"    21.   :\n"
-            f"   -     ( 1.5 )\n"
-            f"     17\n"
-            f"    -    \n"
-            f"  : <code>/blackjack 100</code>\n\n"
-            f"\U0001f3b2 <b></b> <code>/slots [bet]</code>\n"
-            f"    3  :\n"
-            f"   3  7\ufe0f\u20e3 -  50 ( )\n"
-            f"   3   -   3  20\n"
-            f"   2   -  \n"
-            f"  : <code>/slots 50</code>\n\n"
-            f"\U0001f3df <b></b> <code>/card [bet] [higher/lower]</code>\n"
-            f"  ,       .\n"
-            f"    1.8 .\n"
-            f"  : <code>/card 100 </code>\n\n"
-            f"\U0001fa99 <b></b> <code>/coin [bet] [heads/tails]</code>\n"
-            f"    .\n"
-            f"    0.8 .\n"
-            f"  : <code>/coin 100 </code>\n\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f4b8 <b></b>\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
-            f"\U0001f4b0 <b></b> <code>/balance</code> -  AceCoin\n"
-            f"\U0001f4b1 <b></b> <code>/p [amount]</code> -  \n"
-            f"       !\n"
-            f"\U0001f194 <b> ID</b> <code>/id</code> -    \n"
-            f"\U0001f4ca <b></b> <code>/stats</code> -   \n"
-            f"\U0001f3c6 <b></b> <code>/top</code> -  \n\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f380 <b></b>\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
-            f"\U0001f3ab <b></b> -    ,   <code>#</code>\n"
-            f"   : <code>#STARTER</code>, <code>#LUCKY777</code>, <code>#JACKPOT</code>\n"
-            f"       !\n\n"
-            f"\U0001f5ed <b></b> <code>/quests</code>\n"
-            f"   20 !         .\n"
-            f"  -   ,  - .\n\n"
-            f"\U0001f381 <b> </b> -  200 AceCoin   24 .\n"
-            f"      !\n\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f4a1 <b></b>\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
-            f"     1000 AceCoin.\n"
-            f"      !\n"
-            f"  -       .\n"
-            f"      ,     !\n\n"
-            f"  ! \U0001f525"
+        await update.message.reply_text(
+            text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
         )
-        await update.message.reply_text(text, parse_mode='HTML')
     except Exception as e:
-        logger.error(f"help_cmd: {e}")
+        logger.error(f"Ошибка start_cmd: {e}")
 
 
-# ========== STATS ==========
-async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        stats = get_user_stats_raw(user_id)
-        if not stats:
-            await update.message.reply_text(" .  /start.")
-            return
-
-        winrate = 0
-        total = stats.get("wins", 0) + stats.get("losses", 0)
-        if total > 0:
-            winrate = round(stats.get("wins", 0) / total * 100, 1)
-
-        text = (
-            f"\U0001f4ca <b> </b>\n\n"
-            f"\U0001f4b0 <b>:</b> <code>{stats.get('balance', 0):,}</code> AceCoin\n"
-            f"\U0001f3c6 <b>:</b> {stats.get('wins', 0)}\n"
-            f"\U0001f4e9 <b>:</b> {stats.get('losses', 0)}\n"
-            f"\U0001f4c8 <b> :</b> {winrate}%\n"
-            f"\U0001f3af <b> :</b> {stats.get('total_games', 0)}\n"
-            f"\U0001f4b8 <b>  :</b> <code>{stats.get('total_won', 0):,}</code> AceCoin\n"
-            f"\U0001f451 <b>  :</b> <code>{stats.get('biggest_win', 0):,}</code> AceCoin\n"
-            f"\U0001f525 <b>  :</b> {stats.get('max_win_streak', 0)}\n\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            f"\U0001f3b0 <b> </b>\n"
-            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
-            f"\U0001f3c0 <b>:</b> {stats.get('roulette_plays', 0)} \n"
-            f"\U0001f0cf <b>:</b> {stats.get('blackjack_plays', 0)} \n"
-            f"   \U0001f3c5  : {stats.get('blackjack_wins', 0)} \n"
-            f"   \U0001f31f  : {stats.get('natural_blackjacks', 0)} \n"
-            f"\U0001f3b2 <b>:</b> {stats.get('slots_plays', 0)} \n"
-            f"   \U0001f3c5  : {stats.get('slots_match', 0)} \n"
-            f"   \U0001f3b0  : {stats.get('slots_jackpot', 0)} \n"
-            f"\U0001f3df <b>:</b> {stats.get('card_plays', 0)} \n"
-            f"\U0001fa99 <b>:</b> {stats.get('coin_plays', 0)} \n"
-            f"   \U0001f3c5  : {stats.get('coin_wins', 0)} \n\n"
-            f"\U0001f381 <b> :</b> {stats.get('bonus_claimed', 0)} \n"
-        )
-        await update.message.reply_text(text, parse_mode='HTML')
-    except Exception as e:
-        logger.error(f"stats_cmd: {e}")
-
-
-# ========== LEADERBOARD ==========
-async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT user_id, balance, wins, total_games, username FROM users ORDER BY balance DESC LIMIT 10")
-        rows = c.fetchall()
-        conn.close()
-
-        if not rows:
-            await update.message.reply_text("    .")
-            return
-
-        medals = ["\U0001f947", "\U0001f948", "\U0001f949", "4\ufe0f\u20e3", "5\ufe0f\u20e3", "6\ufe0f\u20e3", "7\ufe0f\u20e3", "8\ufe0f\u20e3", "9\ufe0f\u20e3", "\U0001f51f"]
-
-        text = "\U0001f3c6 <b> Ace Casino</b>\U0001f3c6\n\n"
-        text += "<b>  </b>\n"
-        text += "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
-
-        for i, row in enumerate(rows):
-            uid, balance, wins, total_games, username = row
-            display_name = f"@{username}" if username else f"ID: {uid}"
-            medal = medals[i] if i < len(medals) else f"{i+1}"
-            text += f"{medal} <b>{display_name}</b>\n"
-            text += f"    \U0001f4b0 {balance:,} AceCoin"
-            if wins:
-                text += f" | \U0001f3c5 {wins}  | \U0001f3af {total_games} "
-            text += "\n\n"
-
-        # Топ по победам
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT user_id, wins, username FROM users WHERE wins > 0 ORDER BY wins DESC LIMIT 5")
-        win_rows = c.fetchall()
-        conn.close()
-
-        if win_rows:
-            text += "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            text += "<b>  </b>\n"
-            text += "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
-            for i, row in enumerate(win_rows):
-                uid, wins, username = row
-                display_name = f"@{username}" if username else f"ID: {uid}"
-                medal = medals[i] if i < len(medals) else f"{i+1}"
-                text += f"{medal} <b>{display_name}</b> - \U0001f3c5 {wins} \n"
-
-        await update.message.reply_text(text, parse_mode='HTML')
-    except Exception as e:
-        logger.error(f"leaderboard_cmd: {e}")
-
-
-# ========== BALANCE ==========
 async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = get_user(update.effective_user.id)
         if not user:
-            await update.message.reply_text(" .")
+            await update.message.reply_text("Ошибка профиля.")
             return
         keyboard = []
         if check_bonus_available(update.effective_user.id):
-            keyboard.append([InlineKeyboardButton("\U0001f380  200 AceCoin", callback_data="get_bonus")])
+            keyboard.append([InlineKeyboardButton("🎁 Забрать бонус 200 AceCoin", callback_data="get_bonus")])
         reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        text = f"\U0001f4b0  : <code>{user['balance']:,}</code> AceCoin"
+        text = f"💰 Твой баланс: {user['balance']} AceCoin."
         if not check_bonus_available(update.effective_user.id):
-            text += "\n\u23f3   24 ."
-        await update.message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
+            text += "\n⏳ Бонус уже получен, жди 24 часа."
+        await update.message.reply_text(text, reply_markup=reply_markup)
     except Exception as e:
-        logger.error(f"balance_cmd: {e}")
+        logger.error(f"Ошибка balance_cmd: {e}")
 
 
-# ========== BONUS ==========
 async def bonus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
         if check_bonus_available(user_id):
             new_bal = give_bonus_logic(user_id)
-            await update.message.reply_text(f"\U0001f380  200 AceCoin!  : {new_bal}")
+            await update.message.reply_text(f"🎁 Бонус 200 AceCoin начислен! Новый баланс: {new_bal}")
         else:
-            await update.message.reply_text("\u23f3   .  24 .")
+            await update.message.reply_text("⏳ Бонус уже получен. Подожди 24 часа.")
     except Exception as e:
-        logger.error(f"bonus_cmd: {e}")
+        logger.error(f"Ошибка bonus_cmd: {e}")
 
 
-# ========== CALLBACKS ==========
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -650,115 +513,208 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id = query.from_user.id
             if check_bonus_available(user_id):
                 new_bal = give_bonus_logic(user_id)
-                await query.edit_message_text(f"\U0001f380  200 AceCoin!  : {new_bal}")
+                await query.edit_message_text(f"🎁 Бонус 200 AceCoin начислен! Новый баланс: {new_bal}")
             else:
-                await query.answer("  !", show_alert=True)
-        elif query.data == "help_main":
-            text = (
-                "\U0001f4d6 <b> </b>\U0001f4d6\n\n"
-                f"\U0001f3b0 <b>:</b> /roulette, /blackjack, /slots, /card, /coin\n"
-                f"\U0001f4b8 <b>:</b> /balance, /p, /id, /stats, /top\n"
-                f"\U0001f380 <b>:</b>  #, /quests,   \n\n"
-                f"   : <code>/help</code>"
-            )
-            await query.edit_message_text(text, parse_mode='HTML')
-        elif query.data == "quests_list":
-            await quests_cmd_inline(query)
-        elif query.data == "leaderboard":
-            await leaderboard_cmd_inline(query)
+                await query.answer("Бонус уже получен!", show_alert=True)
+        elif query.data == "show_help":
+            await show_help(query)
+        elif query.data == "show_quests":
+            await show_quests_inline(query)
+        elif query.data == "show_top":
+            await show_top_inline(query)
     except Exception as e:
-        logger.error(f"handle_callback: {e}")
+        logger.error(f"Ошибка handle_callback: {e}")
 
 
-async def quests_cmd_inline(query):
+async def show_help(query):
+    text = (
+        "❓ <b>Помощь по Ace Casino</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🎰 <b>ИГРЫ</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>🎡 Рулетка</b> — /рулетка [ставка] [вариант]\n"
+        "• Цвета: <code>красный</code>, <code>чёрный</code> (выплата x2)\n"
+        "• Чёт/нечёт: <code>чётное</code>, <code>нечётное</code> (выплата x2)\n"
+        "• Число 0-36: точный номер (выплата x36)\n"
+        "• Пример: <code>/рулетка 100 красный</code>\n\n"
+        "<b>🃏 Блэкджек</b> — /блекджек [ставка]\n"
+        "• Цель: набрать ближе к 21, но не больше\n"
+        "• Натуральный блэкджек (21 с раздачи) — выплата x1.5\n"
+        "• Кнопки: «Ещё карту» или «Хватит»\n"
+        "• Пример: <code>/блекджек 100</code>\n\n"
+        "<b>🎲 Слоты</b> — /слоты [ставка]\n"
+        "• 3 одинаковых символа — выплата от x3 до x50\n"
+        "• 2 одинаковых — возврат ставки\n"
+        "• Три семёрки — Джекпот! (x50)\n"
+        "• Пример: <code>/слоты 50</code>\n\n"
+        "<b>🃟 Карта выше/ниже</b> — /карта [ставка] [выше|ниже]\n"
+        "• Угадай, будет ли следующая карта выше или ниже\n"
+        "• Выплата: x1.8\n"
+        "• Пример: <code>/карта 100 выше</code>\n\n"
+        "<b>🪙 Монетка</b> — /монетка [ставка] [орёл|решка]\n"
+        "• Классическое угадывание стороны монеты\n"
+        "• Выплата: x1.8\n"
+        "• Пример: <code>/монетка 100 орёл</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "💸 <b>ФИНАНСЫ</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>💱 Перевод</b> — /п [сумма]\n"
+        "• Ответь на сообщение игрока и напиши <code>/п 500</code>\n"
+        "• Нельзя переводить себе или боту\n\n"
+        "<b>💰 Баланс</b> — /б\n"
+        "<b>🆔 Свой ID</b> — /id\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🎁 <b>БОНУСЫ И КВЕСТЫ</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>📅 Ежедневный бонус</b> — /бонус\n"
+        "• 200 AceCoin каждые 24 часа\n\n"
+        "<b>🎫 Промокоды</b>\n"
+        "• Вводи прямо в чат, начиная с #\n"
+        "• Каждый промокод одноразовый\n"
+        "• Пример: <code>#STARTER</code>\n\n"
+        "<b>📋 Квесты</b> — /кв\n"
+        "• 20 квестов разной сложности\n"
+        "• Награды от 200 до 50000 AceCoin\n"
+        "• Выполняются автоматически\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📊 <b>СТАТИСТИКА И РЕЙТИНГИ</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>📊 Статистика</b> — /стат\n"
+        "• Победы, проигрыши, винрейт\n"
+        "• Суммарный выигрыш\n"
+        "• Лучшая серия побед\n"
+        "• Статистика по каждой игре\n\n"
+        "<b>🏆 Лидерборд</b> — /топ\n"
+        "• Топ-10 по балансу\n"
+        "• Топ-5 по победам\n\n"
+        "💡 <b>Совет:</b> Начни с ежедневного бонуса и квестов!"
+    )
+    try:
+        await query.edit_message_text(text, parse_mode='HTML')
+    except:
+        try:
+            await query.message.reply_text(text, parse_mode='HTML')
+        except:
+            pass
+
+
+async def show_quests_inline(query):
     try:
         user_id = query.from_user.id
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("SELECT quest_id FROM quests_completed WHERE user_id = ?", (user_id,))
-        completed_ids = set(row[0] for row in c.fetchall())
+        completed_rows = c.fetchall()
+        completed_ids = set(row[0] for row in completed_rows)
         conn.close()
-        text = "\U0001f5ed <b> </b>\n\n"
+
+        text = "📋 Твои квесты:\n\n"
         for quest in QUESTS:
-            status = "\u2705" if quest["id"] in completed_ids else "\u274c"
-            text += f"{status} #{quest['id']}. {quest['desc']} - +{quest['reward']} AceCoin\n"
+            status = "✅" if quest["id"] in completed_ids else "❌"
+            text += f"{status} #{quest['id']}. {quest['desc']} — +{quest['reward']} AceCoin\n"
+
         completed_count = len(completed_ids)
-        text += f"\n : {completed_count}/{len(QUESTS)}"
-        await query.edit_message_text(text, parse_mode='HTML')
+        text += f"\nВыполнено: {completed_count}/{len(QUESTS)}"
+
+        await query.edit_message_text(text)
     except Exception as e:
-        logger.error(f"quests_cmd_inline: {e}")
+        logger.error(f"Ошибка show_quests_inline: {e}")
 
 
-async def leaderboard_cmd_inline(query):
+async def show_top_inline(query):
     try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT user_id, balance, wins, username FROM users ORDER BY balance DESC LIMIT 10")
-        rows = c.fetchall()
-        conn.close()
-        if not rows:
-            await query.edit_message_text("    .")
-            return
-        medals = ["\U0001f947", "\U0001f948", "\U0001f949", "4\ufe0f\u20e3", "5\ufe0f\u20e3", "6\ufe0f\u20e3", "7\ufe0f\u20e3", "8\ufe0f\u20e3", "9\ufe0f\u20e3", "\U0001f51f"]
-        text = "\U0001f3c6 <b> Ace Casino</b>\U0001f3c6\n\n"
-        for i, row in enumerate(rows):
-            uid, balance, wins, username = row
-            display_name = f"@{username}" if username else f"ID: {uid}"
-            medal = medals[i] if i < len(medals) else f"{i+1}"
-            text += f"{medal} <b>{display_name}</b> - \U0001f4b0 {balance:,} AceCoin"
-            if wins:
-                text += f" | \U0001f3c5 {wins}"
-            text += "\n"
+        text = await get_top_text()
         await query.edit_message_text(text, parse_mode='HTML')
-    except Exception as e:
-        logger.error(f"leaderboard_cmd_inline: {e}")
+    except:
+        try:
+            await query.message.reply_text(text, parse_mode='HTML')
+        except:
+            pass
 
 
-# ========== TRANSFER ==========
+async def get_top_text():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute("SELECT user_id, username, balance FROM users ORDER BY balance DESC LIMIT 10")
+    top_balance = c.fetchall()
+
+    c.execute("SELECT user_id, username, wins FROM users ORDER BY wins DESC LIMIT 5")
+    top_wins = c.fetchall()
+
+    conn.close()
+
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+    text = "🏆 <b>Лидерборд Ace Casino</b>\n\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += "💰 <b>ТОП-10 ПО БАЛАНСУ</b>\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    for i, (uid, uname, bal) in enumerate(top_balance):
+        medal = medals[i] if i < len(medals) else f"{i+1}."
+        display = f"@{uname}" if uname else f"ID: {uid}"
+        text += f"{medal} {display} — {bal:,} AceCoin\n"
+
+    text += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += "👑 <b>ТОП-5 ПО ПОБЕДАМ</b>\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    medals5 = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    for i, (uid, uname, wins) in enumerate(top_wins):
+        medal = medals5[i] if i < len(medals5) else f"{i+1}."
+        display = f"@{uname}" if uname else f"ID: {uid}"
+        text += f"{medal} {display} — {wins} побед\n"
+
+    return text
+
+
 async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
         if not update.message.reply_to_message:
             await update.message.reply_text(
-                "\U0001f4b1  AceCoin:\n"
-                "      :\n"
-                "/p <\n\n"
-                ": /p 500"
+                "💱 Перевод AceCoin:\n"
+                "Ответь на сообщение игрока и напиши:\n"
+                "/п <сумма>\n\n"
+                "Пример: /п 500"
             )
             return
         msg = update.message.text.split()
         if len(msg) < 2:
-            await update.message.reply_text("\u274c  . : /p 500")
+            await update.message.reply_text("❌ Укажи сумму. Пример: /п 500")
             return
         amount = int(msg[1])
     except ValueError:
-        await update.message.reply_text("\u274c   . : /p 500")
+        await update.message.reply_text("❌ Сумма должна быть числом. Пример: /п 500")
         return
     except Exception as e:
-        logger.error(f"transfer_cmd parse: {e}")
+        logger.error(f"Ошибка transfer_cmd (парсинг): {e}")
         return
 
     try:
         sender_id = update.effective_user.id
         target_id = update.message.reply_to_message.from_user.id
+
         if amount <= 0:
-            await update.message.reply_text("\u274c    .")
+            await update.message.reply_text("❌ Сумма должна быть больше нуля.")
             return
         if target_id == sender_id:
-            await update.message.reply_text("\u274c    .")
+            await update.message.reply_text("❌ Нельзя переводить самому себе.")
             return
         if target_id == context.bot.id:
-            await update.message.reply_text("\u274c    .")
+            await update.message.reply_text("❌ Нельзя переводить боту.")
             return
+
         sender = get_user(sender_id)
         if not sender or sender["balance"] < amount:
-            await update.message.reply_text(f"\u274c  AceCoin.  : {sender['balance'] if sender else 0}")
+            await update.message.reply_text(f"❌ Недостаточно AceCoin. Твой баланс: {sender['balance'] if sender else 0}")
             return
+
         receiver = get_user(target_id)
         if not receiver:
-            await update.message.reply_text("\u274c   .")
+            await update.message.reply_text("❌ Не удалось найти получателя.")
             return
+
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (amount, sender_id))
@@ -767,180 +723,321 @@ async def transfer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT balance FROM users WHERE user_id = ?", (sender_id,))
         sender_new = c.fetchone()
         conn.close()
+
         sender_bal = sender_new[0] if sender_new else 0
-        target_name = update.message.reply_to_message.from_user.first_name or ""
+        target_name = update.message.reply_to_message.from_user.first_name or "Игрок"
+
         await update.message.reply_text(
-            f"\u2705  !\n"
-            f": {target_name}\n"
-            f": {amount} AceCoin\n"
-            f"  : {sender_bal} AceCoin"
+            f"✅ Перевод выполнен!\n"
+            f"Получатель: {target_name}\n"
+            f"Сумма: {amount} AceCoin\n"
+            f"Твой остаток: {sender_bal} AceCoin"
         )
+
         try:
             await context.bot.send_message(
                 chat_id=target_id,
-                text=f"\U0001f4b1   {amount} AceCoin!\n  : {receiver['balance'] + amount} AceCoin"
+                text=f"💱 Тебе перевели {amount} AceCoin!\nТвой новый баланс: {receiver['balance'] + amount} AceCoin"
             )
         except Exception:
             pass
     except Exception as e:
-        logger.error(f"transfer_cmd: {e}")
+        logger.error(f"Ошибка transfer_cmd: {e}")
         try:
-            await update.message.reply_text("\u26a0\ufe0f   .")
+            await update.message.reply_text("⚠️ Произошла ошибка при переводе.")
         except:
             pass
 
 
-# ========== ID ==========
 async def id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        await update.message.reply_text(f"\U0001f194  ID: <code>{update.effective_user.id}</code>", parse_mode='HTML')
+        await update.message.reply_text(f"🆔 Твой ID: {update.effective_user.id}")
     except Exception as e:
-        logger.error(f"id_cmd: {e}")
+        logger.error(f"Ошибка id_cmd: {e}")
 
 
-# ========== PROMOCODES ==========
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        text = (
+            "❓ <b>Помощь по Ace Casino</b>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🎰 <b>ИГРЫ</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<b>🎡 Рулетка</b> — /рулетка [ставка] [вариант]\n"
+            "• Цвета: <code>красный</code>, <code>чёрный</code> (выплата x2)\n"
+            "• Чёт/нечёт: <code>чётное</code>, <code>нечётное</code> (выплата x2)\n"
+            "• Число 0-36: точный номер (выплата x36)\n"
+            "• Пример: <code>/рулетка 100 красный</code>\n\n"
+            "<b>🃏 Блэкджек</b> — /блекджек [ставка]\n"
+            "• Цель: набрать ближе к 21, но не больше\n"
+            "• Натуральный блэкджек (21 с раздачи) — выплата x1.5\n"
+            "• Кнопки: «Ещё карту» или «Хватит»\n"
+            "• Пример: <code>/блекджек 100</code>\n\n"
+            "<b>🎲 Слоты</b> — /слоты [ставка]\n"
+            "• 3 одинаковых символа — выплата от x3 до x50\n"
+            "• 2 одинаковых — возврат ставки\n"
+            "• Три семёрки — Джекпот! (x50)\n"
+            "• Пример: <code>/слоты 50</code>\n\n"
+            "<b>🃟 Карта выше/ниже</b> — /карта [ставка] [выше|ниже]\n"
+            "• Угадай, будет ли следующая карта выше или ниже\n"
+            "• Выплата: x1.8\n"
+            "• Пример: <code>/карта 100 выше</code>\n\n"
+            "<b>🪙 Монетка</b> — /монетка [ставка] [орёл|решка]\n"
+            "• Классическое угадывание стороны монеты\n"
+            "• Выплата: x1.8\n"
+            "• Пример: <code>/монетка 100 орёл</code>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💸 <b>ФИНАНСЫ</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<b>💱 Перевод</b> — /п [сумма]\n"
+            "• Ответь на сообщение игрока и напиши <code>/п 500</code>\n"
+            "• Нельзя переводить себе или боту\n\n"
+            "<b>💰 Баланс</b> — /б\n"
+            "<b>🆔 Свой ID</b> — /id\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🎁 <b>БОНУСЫ И КВЕСТЫ</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<b>📅 Ежедневный бонус</b> — /бонус\n"
+            "• 200 AceCoin каждые 24 часа\n\n"
+            "<b>🎫 Промокоды</b>\n"
+            "• Вводи прямо в чат, начиная с #\n"
+            "• Каждый промокод одноразовый\n"
+            "• Пример: <code>#STARTER</code>\n\n"
+            "<b>📋 Квесты</b> — /кв\n"
+            "• 20 квестов разной сложности\n"
+            "• Награды от 200 до 50000 AceCoin\n"
+            "• Выполняются автоматически\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 <b>СТАТИСТИКА И РЕЙТИНГИ</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<b>📊 Статистика</b> — /стат\n"
+            "• Победы, проигрыши, винрейт\n"
+            "• Суммарный выигрыш\n"
+            "• Лучшая серия побед\n"
+            "• Статистика по каждой игре\n\n"
+            "<b>🏆 Лидерборд</b> — /топ\n"
+            "• Топ-10 по балансу\n"
+            "• Топ-5 по победам\n\n"
+            "💡 <b>Совет:</b> Начни с ежедневного бонуса и квестов!"
+        )
+        await update.message.reply_text(text, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Ошибка help_cmd: {e}")
+
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+        stats = get_user_stats_raw(user_id)
+        if not stats:
+            await update.message.reply_text("⚠️ Ошибка загрузки статистики.")
+            return
+
+        total_games = stats.get("total_games", 0)
+        wins = stats.get("wins", 0)
+        losses = stats.get("losses", 0)
+        winrate = round((wins / total_games * 100), 1) if total_games > 0 else 0
+        total_won = stats.get("total_won", 0)
+        biggest_win = stats.get("biggest_win", 0)
+        max_streak = stats.get("max_win_streak", 0)
+
+        text = (
+            f"📊 <b>Твоя статистика</b>\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 <b>Общее</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💵 Баланс: {stats.get('balance', 0):,} AceCoin\n"
+            f"🎮 Всего игр: {total_games}\n"
+            f"🏆 Побед: {wins}\n"
+            f"😞 Поражений: {losses}\n"
+            f"📈 Винрейт: {winrate}%\n"
+            f"💵 Суммарный выигрыш: {total_won:,} AceCoin\n"
+            f"💎 Крупнейший выигрыш: {biggest_win:,} AceCoin\n"
+            f"🔥 Лучшая серия: {max_streak} побед подряд\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎰 <b>По играм</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎡 Рулетка: {stats.get('roulette_plays', 0)} игр\n"
+            f"🃏 Блэкджек: {stats.get('blackjack_plays', 0)} игр ({stats.get('blackjack_wins', 0)} побед)\n"
+            f"🎲 Слоты: {stats.get('slots_plays', 0)} игр\n"
+            f"   • Совпадений: {stats.get('slots_match', 0)}\n"
+            f"   • Джекпотов: {stats.get('slots_jackpot', 0)}\n"
+            f"🃟 Карта: {stats.get('card_plays', 0)} игр\n"
+            f"🪙 Монетка: {stats.get('coin_plays', 0)} игр ({stats.get('coin_wins', 0)} побед)\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎁 <b>Прочее</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎁 Бонусов получено: {stats.get('bonus_claimed', 0)}\n"
+            f"🃏 Натуральных блэкджеков: {stats.get('natural_blackjacks', 0)}\n"
+        )
+        await update.message.reply_text(text, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Ошибка stats_cmd: {e}")
+
+
+async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        text = await get_top_text()
+        await update.message.reply_text(text, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Ошибка top_cmd: {e}")
+
+
 async def promocode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
         text = update.message.text.strip().upper()
         if text not in PROMOCODES:
-            await update.message.reply_text("\u274c  .")
             return
+
         user_id = update.effective_user.id
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("SELECT user_id, used_at FROM promocodes_used WHERE code = ?", (text,))
         row = c.fetchone()
+
         if row:
+            used_by = row[0]
             used_at_str = row[1]
             try:
                 used_at = datetime.fromisoformat(used_at_str)
                 formatted = used_at.strftime("%d.%m.%Y %H:%M")
             except (ValueError, TypeError):
-                formatted = ""
+                formatted = "ранее"
             conn.close()
-            await update.message.reply_text(f"\u274c   ({formatted}).")
+            await update.message.reply_text(f"❌ Промокод уже использован ({formatted}).")
             return
+
         min_reward, max_reward = PROMOCODES[text]
         reward = random.randint(min_reward, max_reward)
+
         c.execute("INSERT INTO promocodes_used (code, user_id, used_at) VALUES (?, ?, ?)", (text, user_id, datetime.now().isoformat()))
         c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
         conn.commit()
         c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
         new_bal_row = c.fetchone()
         conn.close()
+
         new_bal = new_bal_row[0] if new_bal_row else 0
-        await update.message.reply_text(f"\U0001f380  !\n  {reward} AceCoin!\n : {new_bal} AceCoin")
+        await update.message.reply_text(f"🎁 Промокод активирован!\nТы получил {reward} AceCoin!\nНовый баланс: {new_bal} AceCoin")
     except Exception as e:
-        logger.error(f"promocode_handler: {e}")
+        logger.error(f"Ошибка promocode_handler: {e}")
 
 
-# ========== QUESTS ==========
 async def quests_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("SELECT quest_id FROM quests_completed WHERE user_id = ?", (user_id,))
-        completed_ids = set(row[0] for row in c.fetchall())
+        completed_rows = c.fetchall()
+        completed_ids = set(row[0] for row in completed_rows)
         conn.close()
-        text = "\U0001f5ed <b> </b>\n\n"
+
+        text = "📋 Твои квесты:\n\n"
         for quest in QUESTS:
-            status = "\u2705" if quest["id"] in completed_ids else "\u274c"
-            text += f"{status} #{quest['id']}. {quest['desc']} - +{quest['reward']} AceCoin\n"
+            status = "✅" if quest["id"] in completed_ids else "❌"
+            text += f"{status} #{quest['id']}. {quest['desc']} — +{quest['reward']} AceCoin\n"
+
         completed_count = len(completed_ids)
-        text += f"\n : {completed_count}/{len(QUESTS)}"
-        await update.message.reply_text(text, parse_mode='HTML')
+        text += f"\nВыполнено: {completed_count}/{len(QUESTS)}"
+
+        await update.message.reply_text(text)
     except Exception as e:
-        logger.error(f"quests_cmd: {e}")
+        logger.error(f"Ошибка quests_cmd: {e}")
 
 
-# ========== ROULETTE ==========
 async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
         msg = update.message.text.split()
         if len(msg) < 3:
-            await update.message.reply_text(":    .\n: /roulette 100 ")
+            await update.message.reply_text("Рулетка: поставь ставку и выбери вариант.\nПример: /рулетка 100 красный")
             return
         bet = int(msg[1])
         if bet <= 0:
-            await update.message.reply_text("\u274c    .")
+            await update.message.reply_text("❌ Ставка должна быть больше нуля.")
             return
     except ValueError:
-        await update.message.reply_text("\u274c   .")
+        await update.message.reply_text("❌ Ставка должна быть числом.")
         return
     except Exception as e:
-        logger.error(f"roulette_cmd parse: {e}")
+        logger.error(f"Ошибка roulette_cmd (парсинг): {e}")
         return
+
     try:
         user = get_user(update.effective_user.id)
         if not user or user["balance"] < bet:
-            await update.message.reply_text("\u274c  AceCoin!")
+            await update.message.reply_text("❌ Недостаточно AceCoin!")
             return
         target = " ".join(msg[2:]).lower()
         await send_animation(update, ANIMATION_ROULETTE)
-        await update.message.reply_text("\U0001f300  ...")
+        await update.message.reply_text("🌀 Крутим колесо…")
         number = random.randint(0, 36)
         red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
         color = "green" if number == 0 else ("red" if number in red_numbers else "black")
-        color_map = {"": "red", "": "black", "": "black"}
+        color_map = {"красный": "red", "чёрный": "black", "черный": "black"}
         check_color = color_map.get(target, target)
         win = False
         payout = 0
         if check_color == "red" and color == "red":
-            win = True; payout = 2
+            win = True
+            payout = 2
         elif check_color == "black" and color == "black":
-            win = True; payout = 2
-        elif target in ["even", "", ""] and number != 0 and number % 2 == 0:
-            win = True; payout = 2
-        elif target in ["odd", "", ""] and number != 0 and number % 2 != 0:
-            win = True; payout = 2
+            win = True
+            payout = 2
+        elif target in ["even", "чётное", "четное"] and number != 0 and number % 2 == 0:
+            win = True
+            payout = 2
+        elif target in ["odd", "нечётное", "нечетное"] and number != 0 and number % 2 != 0:
+            win = True
+            payout = 2
         elif target.isdigit() and int(target) == number:
-            win = True; payout = 36
-        result_text = f"\U0001f3b1 : {number} ({color})\n"
+            win = True
+            payout = 36
+        result_text = f"🎱 Выпало: {number} ({color})\n"
         if win:
             winnings = bet * (payout - 1)
             update_balance(update.effective_user.id, winnings)
-            result_text += f"\U0001f389 !   {winnings} AceCoin."
+            result_text += f"🎉 Победа! Ты выиграл {winnings} AceCoin."
             update_stats(update.effective_user.id, "roulette", True, winnings)
         else:
             update_balance(update.effective_user.id, -bet)
-            result_text += "\U0001f61e .   !"
+            result_text += "😞 Проигрыш. Попробуй снова!"
             update_stats(update.effective_user.id, "roulette", False, 0)
         await update.message.reply_text(result_text)
     except Exception as e:
-        logger.error(f"roulette_cmd: {e}")
+        logger.error(f"Ошибка roulette_cmd: {e}")
 
 
-# ========== BLACKJACK ==========
 async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
         msg = update.message.text.split()
         if len(msg) < 2:
-            await update.message.reply_text("\U0001f0cf  :  .\n: /blackjack 100")
+            await update.message.reply_text("🃏 Блэкджек: укажи ставку.\nПример: /блекджек 100")
             return
         bet = int(msg[1])
         if bet <= 0:
-            await update.message.reply_text("\u274c    .")
+            await update.message.reply_text("❌ Ставка должна быть больше нуля.")
             return
     except ValueError:
-        await update.message.reply_text("\u274c   .")
+        await update.message.reply_text("❌ Ставка должна быть числом.")
         return
     except Exception as e:
-        logger.error(f"blackjack_cmd parse: {e}")
+        logger.error(f"Ошибка blackjack_cmd (парсинг): {e}")
         return
+
     try:
         user = get_user(update.effective_user.id)
         if not user or user["balance"] < bet:
-            await update.message.reply_text("\U0001f4b8   AceCoin.")
+            await update.message.reply_text("💸 Не хватает AceCoin.")
             return
         await send_animation(update, STICKER_BLACKJACK)
-        await update.message.reply_text("\U0001f0cf  ...")
+        await update.message.reply_text("🃏 Раздаем карты...")
         deck = [i for i in range(1, 14)] * 4
         random.shuffle(deck)
         player_hand = [deck.pop(), deck.pop()]
@@ -951,21 +1048,21 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_balance(update.effective_user.id, winnings)
             mark_natural_blackjack(update.effective_user.id)
             update_stats(update.effective_user.id, "blackjack", True, winnings)
-            await update.message.reply_text(f"\U0001f0cf   !   {winnings} AceCoin!")
+            await update.message.reply_text(f"🃏 Натуральный блэкджек! Ты получил {winnings} AceCoin!")
             return
         p_hand_str = ",".join(map(str, player_hand))
         d_first_str = str(dealer_hand[0])
         keyboard = [
-            [InlineKeyboardButton("\U0001f0cf  ", callback_data=f"bj_hit_{bet}_{p_hand_str}_{d_first_str}")],
-            [InlineKeyboardButton("\u270d ", callback_data=f"bj_stand_{bet}_{p_hand_str}_{d_first_str}")],
+            [InlineKeyboardButton("🃏 Ещё карту", callback_data=f"bj_hit_{bet}_{p_hand_str}_{d_first_str}")],
+            [InlineKeyboardButton("✋ Хватит", callback_data=f"bj_stand_{bet}_{p_hand_str}_{d_first_str}")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            f"\U0001f0cf  : {player_hand} (: {p_val})\n: [{dealer_hand[0]}, ?]\n :",
+            f"🃏 Твои карты: {player_hand} (сумма: {p_val})\nДилер: [{dealer_hand[0]}, ?]\nВыбери действие:",
             reply_markup=reply_markup,
         )
     except Exception as e:
-        logger.error(f"blackjack_cmd: {e}")
+        logger.error(f"Ошибка blackjack_cmd: {e}")
 
 
 async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -974,7 +1071,7 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
         await query.answer()
         data = query.data.split("_")
         if len(data) < 5:
-            await query.edit_message_text("\u274c  .")
+            await query.edit_message_text("❌ Ошибка сессии.")
             return
         action = data[1]
         bet = int(data[2])
@@ -984,13 +1081,14 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
         dealer_first = int(d_first_str)
     except (ValueError, IndexError):
         try:
-            await query.edit_message_text("\u274c  .")
+            await query.edit_message_text("❌ Ошибка данных.")
         except:
             pass
         return
     except Exception as e:
-        logger.error(f"handle_blackjack_callback parse: {e}")
+        logger.error(f"Ошибка handle_blackjack_callback (парсинг): {e}")
         return
+
     try:
         user_id = update.effective_user.id
         deck = [i for i in range(1, 14)] * 4
@@ -1008,15 +1106,15 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
             if p_val > 21:
                 update_balance(user_id, -bet)
                 update_stats(user_id, "blackjack", False, 0)
-                await query.edit_message_text(f"\U0001f0cf  ({p_val})!   {bet} AceCoin.")
+                await query.edit_message_text(f"🃏 Перебор ({p_val})! Ты потерял {bet} AceCoin.")
                 return
             p_hand_str_new = ",".join(map(str, player_hand))
             keyboard = [
-                [InlineKeyboardButton("\U0001f0cf  ", callback_data=f"bj_hit_{bet}_{p_hand_str_new}_{d_first_str}")],
-                [InlineKeyboardButton("\u270d ", callback_data=f"bj_stand_{bet}_{p_hand_str_new}_{d_first_str}")],
+                [InlineKeyboardButton("🃏 Ещё карту", callback_data=f"bj_hit_{bet}_{p_hand_str_new}_{d_first_str}")],
+                [InlineKeyboardButton("✋ Хватит", callback_data=f"bj_stand_{bet}_{p_hand_str_new}_{d_first_str}")],
             ]
             await query.edit_message_text(
-                f"\U0001f0cf  : {p_val}. : [{dealer_first}, ?]\n ?",
+                f"🃏 Твоя сумма: {p_val}. Дилер: [{dealer_first}, ?]\nЧто делаешь?",
                 reply_markup=InlineKeyboardMarkup(keyboard),
             )
             return
@@ -1026,63 +1124,63 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
             dealer_hand.append(deck.pop())
         d_val = hand_value(dealer_hand)
         p_val = hand_value(player_hand)
-        msg = f"\U0001f0cf : {dealer_hand} (: {d_val})\n: {player_hand} (: {p_val})\n\n"
+        msg = f"🃏 Дилер: {dealer_hand} (сумма: {d_val})\nТы: {player_hand} (сумма: {p_val})\n\n"
         if p_val > 21:
-            msg += "\U0001f61e   ."
+            msg += "😞 Перебор — проигрыш."
             update_balance(user_id, -bet)
             update_stats(user_id, "blackjack", False, 0)
         elif d_val > 21 or p_val > d_val:
             winnings = bet
-            msg += f"\U0001f389 ! +{winnings} AceCoin."
+            msg += f"🎉 Победа! +{winnings} AceCoin."
             update_balance(user_id, winnings)
             update_stats(user_id, "blackjack", True, winnings)
         elif p_val < d_val:
-            msg += "\U0001f61e  ."
+            msg += "😞 Дилер выиграл."
             update_balance(user_id, -bet)
             update_stats(user_id, "blackjack", False, 0)
         else:
-            msg += "\U0001f91d   ."
+            msg += "🤝 Ничья — ставка возвращена."
         await query.edit_message_text(msg)
     except Exception as e:
-        logger.error(f"handle_blackjack_callback: {e}")
+        logger.error(f"Ошибка handle_blackjack_callback: {e}")
 
 
-# ========== SLOTS ==========
 async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
         msg = update.message.text.split()
         if len(msg) < 2:
-            await update.message.reply_text("\U0001f3b2  :  .\n: /slots 50")
+            await update.message.reply_text("🎲 Слоты: поставь ставку.\nПример: /слоты 50")
             return
         bet = int(msg[1])
         if bet <= 0:
-            await update.message.reply_text("\u274c    .")
+            await update.message.reply_text("❌ Ставка должна быть больше нуля.")
             return
     except ValueError:
-        await update.message.reply_text("\u274c   .")
+        await update.message.reply_text("❌ Ставка должна быть числом.")
         return
     except Exception as e:
-        logger.error(f"slots_cmd parse: {e}")
+        logger.error(f"Ошибка slots_cmd (парсинг): {e}")
         return
+
     try:
         user = get_user(update.effective_user.id)
         if not user or user["balance"] < bet:
-            await update.message.reply_text("\U0001f4b8  AceCoin.")
+            await update.message.reply_text("💸 Мало AceCoin.")
             return
         await send_animation(update, ANIMATION_SLOTS)
-        await update.message.reply_text("\U0001f3b0  ...")
-        symbols = ["\U0001f352", "\U0001f34b", "\U0001f514", "\U0001f31f", "\U0001f48e", "7\ufe0f\u20e3"]
+        await update.message.reply_text("🎰 Барабаны крутятся...")
+        symbols = ["🍒", "🍋", "🔔", "⭐", "💎", "7️⃣"]
         reels = [random.choice(symbols) for _ in range(3)]
-        payout_map = {"\U0001f352": 3, "\U0001f34b": 4, "\U0001f514": 5, "\U0001f31f": 10, "\U0001f48e": 20, "7\ufe0f\u20e3": 50}
+        payout_map = {"🍒": 3, "🍋": 4, "🔔": 5, "⭐": 10, "💎": 20, "7️⃣": 50}
         winnings = 0
         is_match = False
         is_jackpot = False
         if reels[0] == reels[1] == reels[2]:
             winnings = bet * payout_map[reels[0]]
             is_match = True
-            if reels[0] == "7\ufe0f\u20e3":
+            if reels[0] == "7️⃣":
                 is_jackpot = True
         elif reels[0] == reels[1] or reels[1] == reels[2] or reels[0] == reels[2]:
             winnings = bet
@@ -1094,139 +1192,137 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_stats(update.effective_user.id, "slots", True, net)
         else:
             update_stats(update.effective_user.id, "slots", False, 0)
-        text = f"\U0001f3b2 {reels[0]} {reels[1]} {reels[2]}\n"
+        text = f"🎲 {reels[0]} {reels[1]} {reels[2]}\n"
         if net > 0:
-            text += f"\U0001f389 : {net} AceCoin!"
+            text += f"🎉 Выигрыш: {net} AceCoin!"
             if is_jackpot:
-                text += " \U0001f3b0 !"
+                text += " 🎰 ДЖЕКПОТ!"
         elif net == 0:
-            text += "\U0001f91d   ."
+            text += "🤝 Возврат ставки."
         else:
-            text += "\U0001f61e ."
+            text += "😞 Проигрыш."
         await update.message.reply_text(text)
     except Exception as e:
-        logger.error(f"slots_cmd: {e}")
+        logger.error(f"Ошибка slots_cmd: {e}")
 
 
-# ========== CARD ==========
 async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
         msg = update.message.text.split()
         if len(msg) < 3:
-            await update.message.reply_text("\U0001f3df  /:    .\n: /card 100 ")
+            await update.message.reply_text("🃟 Карта выше/ниже: укажи ставку и выбор.\nПример: /карта 100 выше")
             return
         bet = int(msg[1])
         choice = msg[2].lower()
         if bet <= 0:
-            await update.message.reply_text("\u274c    .")
+            await update.message.reply_text("❌ Ставка должна быть больше нуля.")
             return
     except ValueError:
-        await update.message.reply_text("\u274c  .")
+        await update.message.reply_text("❌ Неверный формат.")
         return
     except Exception as e:
-        logger.error(f"card_cmd parse: {e}")
+        logger.error(f"Ошибка card_cmd (парсинг): {e}")
         return
+
     try:
         user = get_user(update.effective_user.id)
         if not user or user["balance"] < bet:
-            await update.message.reply_text("\U0001f4b8  AceCoin.")
+            await update.message.reply_text("💸 Нет AceCoin.")
             return
         await send_animation(update, STICKER_CARD)
-        await update.message.reply_text("\U0001f3df  ...")
+        await update.message.reply_text("🃟 Тянем карту...")
         cards = list(range(2, 15))
         random.shuffle(cards)
         current = cards.pop()
         next_card = cards.pop()
-        won = (choice == "" and next_card > current) or (choice == "" and next_card < current)
+        won = (choice == "выше" and next_card > current) or (choice == "ниже" and next_card < current)
         multiplier = 1.8
         if won:
             winnings = int(bet * (multiplier - 1))
             update_balance(update.effective_user.id, winnings)
             update_stats(update.effective_user.id, "card", True, winnings)
-            await update.message.reply_text(f"\U0001f3df : {current}, : {next_card}\n\U0001f389  ! +{winnings} AceCoin.")
+            await update.message.reply_text(f"🃟 Текущая: {current}, следующая: {next_card}\n🎉 Ты угадал! +{winnings} AceCoin.")
         else:
             update_balance(update.effective_user.id, -bet)
             update_stats(update.effective_user.id, "card", False, 0)
-            await update.message.reply_text(f"\U0001f3df : {current}, : {next_card}\n\U0001f61e  . -{bet} AceCoin.")
+            await update.message.reply_text(f"🃟 Текущая: {current}, следующая: {next_card}\n😞 Не угадал. -{bet} AceCoin.")
     except Exception as e:
-        logger.error(f"card_cmd: {e}")
+        logger.error(f"Ошибка card_cmd: {e}")
 
 
-# ========== COIN ==========
 async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
         msg = update.message.text.split()
         if len(msg) < 3:
-            await update.message.reply_text("\U0001fa99 :   .\n: /coin 100 ")
+            await update.message.reply_text("🪙 Монетка: ставка и сторона.\nПример: /монетка 100 орёл")
             return
         bet = int(msg[1])
         choice = msg[2].lower()
         if bet <= 0:
-            await update.message.reply_text("\u274c    .")
+            await update.message.reply_text("❌ Ставка должна быть больше нуля.")
             return
     except ValueError:
-        await update.message.reply_text("\u274c  .")
+        await update.message.reply_text("❌ Ошибка формата.")
         return
     except Exception as e:
-        logger.error(f"coin_cmd parse: {e}")
+        logger.error(f"Ошибка coin_cmd (парсинг): {e}")
         return
+
     try:
         user = get_user(update.effective_user.id)
         if not user or user["balance"] < bet:
-            await update.message.reply_text("\U0001f4b8  AceCoin.")
+            await update.message.reply_text("💸 Нет AceCoin.")
             return
         await send_animation(update, ANIMATION_COIN)
-        await update.message.reply_text("\U0001fa99  ...")
-        side = random.choice(["", ""])
+        await update.message.reply_text("🪙 Монетка летит...")
+        side = random.choice(["орёл", "решка"])
         if choice == side:
             winnings = int(bet * 0.8)
             update_balance(update.effective_user.id, winnings)
             update_stats(update.effective_user.id, "coin", True, winnings)
-            await update.message.reply_text(f"\U0001fa99 : {side}\n\U0001f389 !   {winnings} AceCoin.")
+            await update.message.reply_text(f"🪙 Выпало: {side}\n🎉 Победа! Ты выиграл {winnings} AceCoin.")
         else:
             update_balance(update.effective_user.id, -bet)
             update_stats(update.effective_user.id, "coin", False, 0)
-            await update.message.reply_text(f"\U0001fa99 : {side}\n\U0001f61e .   {bet} AceCoin.")
+            await update.message.reply_text(f"🪙 Выпало: {side}\n😞 Проигрыш. Ты потерял {bet} AceCoin.")
     except Exception as e:
-        logger.error(f"coin_cmd: {e}")
+        logger.error(f"Ошибка coin_cmd: {e}")
 
 
-# ========== GIVE ==========
 async def give_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
         if user_id != ADMIN_ID:
-            await update.message.reply_text("\u274c     .")
+            await update.message.reply_text("❌ У тебя нет прав на эту команду.")
             return
         msg = update.message.text.split()
         if len(msg) < 2:
-            await update.message.reply_text(": /give 10000")
+            await update.message.reply_text("Используй: /give 10000")
             return
         amount = int(msg[1])
         new_bal = update_balance(user_id, amount)
         if new_bal is not None:
-            await update.message.reply_text(f"\u2705  {amount} AceCoin.  : {new_bal}")
+            await update.message.reply_text(f"✅ Начислено {amount} AceCoin. Новый баланс: {new_bal}")
     except ValueError:
-        await update.message.reply_text("   .")
+        await update.message.reply_text("Число должно быть целым.")
     except Exception as e:
-        logger.error(f"give_cmd: {e}")
+        logger.error(f"Ошибка give_cmd: {e}")
 
 
-# ========== MAIN ==========
 def main():
     token = os.getenv("BOT_TOKEN")
     if not token:
-        logger.error(": BOT_TOKEN !")
+        logger.error("КРИТИЧЕСКАЯ ОШИБКА: Переменная BOT_TOKEN пуста!")
         return
 
     application = ApplicationBuilder().token(token).build()
 
+    # Латинские команды
     application.add_handler(CommandHandler("start", start_cmd))
-    application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(CommandHandler("balance", balance_cmd))
     application.add_handler(CommandHandler("roulette", roulette_cmd))
     application.add_handler(CommandHandler("blackjack", blackjack_cmd))
@@ -1238,33 +1334,37 @@ def main():
     application.add_handler(CommandHandler("transfer", transfer_cmd))
     application.add_handler(CommandHandler("id", id_cmd))
     application.add_handler(CommandHandler("quests", quests_cmd))
+    application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(CommandHandler("stats", stats_cmd))
-    application.add_handler(CommandHandler("top", leaderboard_cmd))
+    application.add_handler(CommandHandler("top", top_cmd))
 
-    # Cyrillic commands
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u0431($|\s)'), balance_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u043f($|\s)'), transfer_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u0440\u0443\u043b\u0435\u0442\u043a\u0430($|\s)'), roulette_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u0431\u043b\u0435\u043a\u0434\u0436\u0435\u043a($|\s)'), blackjack_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u0441\u043b\u043e\u0442\u044b($|\s)'), slots_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u043a\u0430\u0440\u0442\u0430($|\s)'), card_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u043c\u043e\u043d\u0435\u0442\u043a\u0430($|\s)'), coin_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u043a\u0432($|\s)'), quests_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u0441\u0442\u0430\u0442($|\s)'), stats_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u0442\u043e\u043f($|\s)'), leaderboard_cmd))
-    application.add_handler(MessageHandler(filters.Regex(r'^/\u043f\u043e\u043c\u043e\u0449\u044c($|\s)'), help_cmd))
+    # Кириллические команды
+    application.add_handler(MessageHandler(filters.Regex(r'^/б($|\s)'), balance_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/п($|\s)'), transfer_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/рулетка($|\s)'), roulette_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/блекджек($|\s)'), blackjack_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/слоты($|\s)'), slots_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/карта($|\s)'), card_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/монетка($|\s)'), coin_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/кв($|\s)'), quests_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/стат($|\s)'), stats_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/топ($|\s)'), top_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/помощь($|\s)'), help_cmd))
 
-    # Promocodes
+    # Промокоды (любое сообщение, начинающееся с #)
     application.add_handler(MessageHandler(filters.Regex(r'^#'), promocode_handler))
 
-    # Callbacks
-    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^get_bonus$|^help_main$|^quests_list$|^leaderboard$"))
+    # Кнопки
+    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^get_bonus$"))
+    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^show_help$"))
+    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^show_quests$"))
+    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^show_top$"))
     application.add_handler(CallbackQueryHandler(handle_blackjack_callback, pattern="^bj_"))
 
-    # Error handler
+    # Глобальный обработчик ошибок
     application.add_error_handler(error_handler)
 
-    logger.info(" Bot ...")
+    logger.info("🚀 Бот запускается...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
