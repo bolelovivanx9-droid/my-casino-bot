@@ -85,18 +85,27 @@ def check_bonus_available(user_id):
     row = c.fetchone()
     conn.close()
     
+    # Если пользователя нет или даты нет (None) — бонус доступен
     if not row or not row:
         return True
         
     last_bonus_str = row
+    
+    # ГЛАВНОЕ ИСПРАВЛЕНИЕ: проверяем, что это именно строка
+    if not isinstance(last_bonus_str, str):
+        return True
+
     now = datetime.now()
     try:
         last_bonus = datetime.fromisoformat(last_bonus_str)
         if (now - last_bonus) >= timedelta(hours=24):
             return True
-    except ValueError:
+    except (ValueError, TypeError):
+        # Если дата битая или формат неверный — считаем, что бонус можно взять
         return True
+        
     return False
+
 
 
 def give_bonus_logic(user_id):
