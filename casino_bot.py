@@ -10,9 +10,10 @@ import logging
 # --- НАСТРОЙКА ЛОГГИРОВАНИЯ ---
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG  # Теперь будут видны и INFO, и DEBUG сообщения
 )
 logger = logging.getLogger(__name__)
+
 
 load_dotenv()
 
