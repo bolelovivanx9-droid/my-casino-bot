@@ -18,6 +18,10 @@ load_dotenv()
 
 DB_NAME = "casino.db"
 
+# --- ТВОЙ TELEGRAM ID ДЛЯ АДМИН-КОМАНД ---
+# Замени 123456789 на свой реальный ID (узнать через @userinfobot)
+ADMIN_ID = 8762706702
+
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -152,6 +156,31 @@ async def bonus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🎁 Бонус 200 фишек начислен! Следующий через 24 часа.")
     else:
         await update.message.reply_text("⏳ Бонус уже получен. Подожди 24 часа.")
+
+
+async def give_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Админ-команда: начисляет фишки. Доступна только ADMIN_ID."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ У тебя нет прав на эту команду.")
+        return
+
+    msg = update.message.text.split()
+    if len(msg) < 2:
+        await update.message.reply_text("Используй: /give 10000")
+        return
+
+    try:
+        amount = int(msg[1])
+    except ValueError:
+        await update.message.reply_text("Число должно быть целым.")
+        return
+
+    new_bal = update_balance(user_id, amount)
+    if new_bal is not None:
+        await update.message.reply_text(f"✅ Начислено {amount} фишек. Новый баланс: {new_bal}")
+    else:
+        await update.message.reply_text("⚠️ Ошибка при начислении.")
 
 
 async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -458,6 +487,7 @@ def main():
     application.add_handler(CommandHandler("coin", coin_cmd))
     application.add_handler(CommandHandler("balance", balance_cmd))
     application.add_handler(CommandHandler("bonus", bonus_cmd))
+    application.add_handler(CommandHandler("give", give_cmd))
 
     application.add_handler(CallbackQueryHandler(handle_blackjack_callback))
 
