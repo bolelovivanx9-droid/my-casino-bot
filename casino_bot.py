@@ -3,7 +3,7 @@ import random
 import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from dotenv import load_dotenv
 import logging
 
@@ -493,33 +493,28 @@ def main():
 
     application = ApplicationBuilder().token(token).build()
 
+    # --- ЛАТИНСКИЕ КОМАНДЫ (работают через CommandHandler) ---
+    application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("balance", balance_cmd))
-    application.add_handler(CommandHandler("б", balance_cmd))
-    
     application.add_handler(CommandHandler("roulette", roulette_cmd))
-    application.add_handler(CommandHandler("рулетка", roulette_cmd))
-    
     application.add_handler(CommandHandler("blackjack", blackjack_cmd))
-    application.add_handler(CommandHandler("блекджек", blackjack_cmd))
-    
     application.add_handler(CommandHandler("slots", slots_cmd))
-    application.add_handler(CommandHandler("слоты", slots_cmd))
-    
     application.add_handler(CommandHandler("card", card_cmd))
-    application.add_handler(CommandHandler("карта", card_cmd))
-    
     application.add_handler(CommandHandler("coin", coin_cmd))
-    application.add_handler(CommandHandler("монетка", coin_cmd))
-    
     application.add_handler(CommandHandler("bonus", bonus_cmd))
     application.add_handler(CommandHandler("give", give_cmd))
-    
+
+    # --- КИРИЛЛИЧЕСКИЕ КОМАНДЫ (через MessageHandler + Regex) ---
+    application.add_handler(MessageHandler(filters.Regex(r'^/б($|\s)'), balance_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/рулетка($|\s)'), roulette_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/блекджек($|\s)'), blackjack_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/слоты($|\s)'), slots_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/карта($|\s)'), card_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r'^/монетка($|\s)'), coin_cmd))
+
+    # --- ОБРАБОТЧИКИ КНОПОК ---
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(CallbackQueryHandler(handle_blackjack_callback))
 
     logger.info("🚀 Бот запускается...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    init_db()
-    main()
