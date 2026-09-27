@@ -27,11 +27,11 @@ DB_NAME = "casino.db"
 
 ADMIN_ID = 8762706702
 
-STICKER_ROULETTE = "AAMCAgADGQEDmFvcari2v_HlCpiqaR-95srvTf2L4iwAAmhvAAL2dKlLNdFghJKsV9wBAAdtAAM9BA"
+ANIMATION_ROULETTE = "AAMCAQADGQEDmF9marjABoVRagHwqE0_Ub4xe4BsfesAAtsGAAKghpBFwi-Q2tzYUAIBAAdtAAM9BA"
 STICKER_BLACKJACK = None
-STICKER_SLOTS = "AAMCAgADGQEDmFxJari4I33gO65IVRiHTi44A1NVqcgAAl5bAAIqkThIYxaqKAEWYVIBAAdtAAM9BA"
+ANIMATION_SLOTS = "AgADHQsAAu_tpFA"
 STICKER_CARD = None
-STICKER_COIN = "AAMCBQADGQEDmFyYari5GmsCOuLYMYsrGJWbKKC4b0oAAkkAA6_zxDVDdNs1jD51_AEAB20AAz0E"
+ANIMATION_COIN = "AgADZwcAAtnSJVE"
 
 
 def init_db():
@@ -122,13 +122,19 @@ def hand_value(hand):
     return value
 
 
-async def send_animation(update, sticker_id):
-    if not sticker_id:
+async def send_animation(update, file_id):
+    if not file_id:
         return
     try:
-        await update.message.reply_sticker(sticker=sticker_id)
+        # send_video — правильный метод для MP4-файлов
+        await update.effective_chat.send_video(
+            video=file_id,
+            supports_streaming=True,
+            caption="🎰 Крутим слоты!"  # можно добавить подпись, а можно убрать caption
+        )
+        logger.info(f"✅ Анимация {file_id[:10]}... успешно отправлена.")
     except Exception as e:
-        logger.warning(f"Не удалось отправить стикер: {e}")
+        logger.error(f"❌ Не удалось отправить анимацию {file_id[:10]}... Ошибка: {e}")
 
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -205,7 +211,7 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💸 Недостаточно фишек!")
         return
     target = " ".join(msg[2:]).lower()
-    await send_animation(update, STICKER_ROULETTE)
+   await send_animation(update, ANIMATION_ROULETTE)
     await update.message.reply_text("🌀 Крутим колесо...")
     number = random.randint(0, 36)
     red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
@@ -354,7 +360,7 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or user["balance"] < bet:
         await update.message.reply_text("💸 Мало фишек.")
         return
-    await send_animation(update, STICKER_SLOTS)
+    await send_animation(update, ANIMATION_SLOTS)
     await update.message.reply_text("🎰 Барабаны крутятся...")
     symbols = ["🍒", "🍋", "🔔", "⭐", "💎", "7️⃣"]
     reels = [random.choice(symbols) for _ in range(3)]
@@ -423,7 +429,7 @@ async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or user["balance"] < bet:
         await update.message.reply_text("💸 Фишек нет.")
         return
-    await send_animation(update, STICKER_COIN)
+    await send_animation(update, ANIMATION_COIN)
     await update.message.reply_text("🪙 Монетка летит...")
     side = random.choice(["орел", "решка"])
     if choice == side:
