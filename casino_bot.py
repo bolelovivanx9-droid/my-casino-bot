@@ -19,18 +19,15 @@ load_dotenv()
 DB_NAME = "casino.db"
 
 # --- ТВОЙ TELEGRAM ID ---
-# ВПИШИ СЮДА СВОЙ ID БЕЗ ПРОБЕЛОВ!
 ADMIN_ID = 8762706702 
 
 # --- ID СТИКЕРОВ (АНИМАЦИЯ) ---
-# Найди крутые анимированные стикеры в Telegram, перешли их боту @getidsbot, 
-# чтобы узнать их file_id. Вставь их сюда.
-# Если не хочешь ставить свои, оставь эти заглушки (бот просто напишет текст, если стикер не найдется).
-STICKER_ROULETTE = "AAMCAgADGQEDmFvcari2v_HlCpiqaR-95srvTf2L4iwAAmhvAAL2dKlLNdFghJKsV9wBAAdtAAM9BA"  # Замени на реальный file_id стикера рулетки
-STICKER_BLACKJACK = None      # Было: "CAACAgIAAxkBAAIBZn..."
-STICKER_SLOTS = "AAMCAgADGQEDmFxJari4I33gO65IVRiHTi44A1NVqcgAAl5bAAIqkThIYxaqKAEWYVIBAAdtAAM9BA"     # Замени на реальный file_id стикера слотов
-STICKER_CARD = None           # Было: "CAACAgIAAxkBAAIBZp..."
-STICKER_COIN = "AAMCBQADGQEDmFyYari5GmsCOuLYMYsrGJWbKKC4b0oAAkkAA6_zxDVDdNs1jD51_AEAB20AAz0E"      # Замени на реальный file_id стикера монеты
+# Если стикера нет, ставь None. Если есть - обязательно в кавычках.
+STICKER_ROULETTE = "AAMCAgADGQEDmFvcari2v_HlCpiqaR-95srvTf2L4iwAAmhvAAL2dKlLNdFghJKsV9wBAAdtAAM9BA"
+STICKER_BLACKJACK = None      
+STICKER_SLOTS = "AAMCAgADGQEDmFxJari4I33gO65IVRiHTi44A1NVqcgAAl5bAAIqkThIYxaqKAEWYVIBAAdtAAM9BA"     
+STICKER_CARD = None           
+STICKER_COIN = "AAMCBQADGQEDmFyYari5GmsCOuLYMYsrGJWbKKC4b0oAAkkAA6_zxDVDdNs1jD51_AEAB20AAz0E"      
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -76,6 +73,7 @@ def check_bonus_available(user_id):
     row = c.fetchone()
     conn.close()
     
+    # ИСПРАВЛЕНИЕ: проверяем наличие строки и её значение
     if not row or not row:
         return True
     
@@ -87,7 +85,7 @@ def check_bonus_available(user_id):
         if (now - last_bonus) >= timedelta(hours=24):
             return True
     except ValueError:
-        return True # Если дата битая, считаем что можно
+        return True 
         
     return False
 
@@ -96,16 +94,14 @@ def give_bonus_logic(user_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
-    # Начисляем фишки
     c.execute("UPDATE users SET balance = balance + 200 WHERE user_id = ?", (user_id,))
-    # Обновляем время бонуса
     c.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (now.isoformat(), user_id))
     conn.commit()
     
     c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     new_bal = c.fetchone()
     conn.close()
-    return new_bal
+    return new_bal if new_bal else None
 
 def hand_value(hand):
     value = 0
@@ -122,15 +118,12 @@ def hand_value(hand):
 # --- ХЕНДЛЕРЫ (КОМАНДЫ) ---
 
 async def send_animation(update, sticker_id):
-    """Отправляет стикер-анимацию, если ID есть. Если нет (None) — просто ничего не делает."""
     if not sticker_id:
-        return  # Если стикера нет, сразу выходим из функции
-    
+        return  
     try:
         await update.message.reply_sticker(sticker=sticker_id)
     except Exception as e:
-        logger.warning(f"Не удалось отправить стикер (возможно, ID неверен или удален): {e}")
-        # Ошибка не критичная, бот продолжит работу 
+        logger.warning(f"Не удалось отправить стикер: {e}")
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
@@ -138,7 +131,6 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ошибка профиля.")
         return
     
-    # Кнопка бонуса при старте (если доступен)
     keyboard = []
     if check_bonus_available(update.effective_user.id):
         keyboard.append([InlineKeyboardButton("🎁 Забрать бонус 200", callback_data="get_bonus")])
@@ -163,7 +155,6 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ошибка профиля.")
         return
 
-    # Логика кнопки бонуса
     keyboard = []
     if check_bonus_available(update.effective_user.id):
         keyboard.append([InlineKeyboardButton("🎁 Забрать бонус 200", callback_data="get_bonus")])
@@ -177,7 +168,6 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=reply_markup)
 
 async def bonus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Эта команда нужна, если пользователь пишет /bonus вручную
     user_id = update.effective_user.id
     if check_bonus_available(user_id):
         new_bal = give_bonus_logic(user_id)
@@ -197,17 +187,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.answer("Бонус уже получен!", show_alert=True)
 
-# --- ИГРЫ С АНИМАЦИЕЙ ---
+# --- ИГРЫ ---
 
 async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.split()
-    # Поддержка команды "рулетка" вместо "/roulette"
-    # msg может быть "рулетка" или "/roulette"
     
     if len(msg) < 3:
         await update.message.reply_text("🎰 Рулетка: поставь ставку и выбери вариант.\nПример: рулетка 100 красный")
         return
 
+    # ИСПРАВЛЕНИЕ: берем элемент по индексу
     try:
         bet = int(msg)
     except ValueError:
@@ -221,17 +210,13 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     target = " ".join(msg[2:]).lower()
     
-    # 1. ОТПРАВЛЯЕМ АНИМАЦИЮ
     await send_animation(update, STICKER_ROULETTE)
-    
-    # Небольшая задержка не нужна, Telegram сам покажет стикер, но можно добавить текст "Крутим..."
     await update.message.reply_text("🌀 Крутим колесо...")
 
     number = random.randint(0, 36)
     red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
     color = "green" if number == 0 else ("red" if number in red_numbers else "black")
     
-    # Маппинг русских слов на английские для проверки
     color_map = {"красный": "red", "чёрный": "black", "черный": "black"}
     check_color = color_map.get(target, target)
 
@@ -261,6 +246,7 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🃏 Блэкджек: укажи ставку.\nПример: блекджек 100")
         return
 
+    # ИСПРАВЛЕНИЕ: msg
     try:
         bet = int(msg)
     except ValueError:
@@ -272,7 +258,6 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💸 Не хватает фишек.")
         return
 
-    # 1. АНИМАЦИЯ
     await send_animation(update, STICKER_BLACKJACK)
     await update.message.reply_text("🃏 Раздаем карты...")
 
@@ -302,16 +287,17 @@ async def blackjack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# Обработчик кнопок блэкджека (оставляем как было, он уже рабочий)
 async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data.split("_")
+    
+    # ИСПРАВЛЕНИЕ: правильная распаковка данных
     if len(data) < 5:
         await query.edit_message_text("❌ Ошибка сессии.")
         return
 
-    action = data
+    action = data       # hit или stand
     try:
         bet = int(data)
         p_hand_str = data
@@ -349,6 +335,7 @@ async def handle_blackjack_callback(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
+    # Если игрок сказал "Хватит" (stand)
     while hand_value(dealer_hand) < 17:
         if not deck: break
         dealer_hand.append(deck.pop())
@@ -377,6 +364,7 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🎲 Слоты: поставь ставку.\nПример: слоты 50")
         return
 
+    # ИСПРАВЛЕНИЕ: msg
     try:
         bet = int(msg)
     except ValueError:
@@ -388,7 +376,6 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💸 Мало фишек.")
         return
 
-    # 1. АНИМАЦИЯ
     await send_animation(update, STICKER_SLOTS)
     await update.message.reply_text("🎰 Барабаны крутятся...")
 
@@ -397,6 +384,7 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payout_map = {"🍒": 3, "🍋": 4, "🔔": 5, "⭐": 10, "💎": 20, "7️⃣": 50}
     winnings = 0
 
+    # ИСПРАВЛЕНИЕ: проверка индексов
     if reels == reels == reels:
         winnings = bet * payout_map[reels]
     elif reels == reels or reels == reels or reels == reels:
@@ -417,6 +405,7 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🃟 Карта выше/ниже: укажи ставку и выбор.\nПример: карта 100 выше")
         return
 
+    # ИСПРАВЛЕНИЕ: msg и msg
     try:
         bet = int(msg)
         choice = msg.lower()
@@ -429,7 +418,6 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💸 Нет фишек.")
         return
 
-    # 1. АНИМАЦИЯ
     await send_animation(update, STICKER_CARD)
     await update.message.reply_text("🃟 Тянем карту...")
 
@@ -454,6 +442,7 @@ async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🪙 Монетка: ставка и сторона.\nПример: монетка 100 орел")
         return
 
+    # ИСПРАВЛЕНИЕ: msg и msg
     try:
         bet = int(msg)
         choice = msg.lower()
@@ -466,7 +455,6 @@ async def coin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💸 Фишек нет.")
         return
 
-    # 1. АНИМАЦИЯ
     await send_animation(update, STICKER_COIN)
     await update.message.reply_text("🪙 Монетка летит...")
 
@@ -505,40 +493,27 @@ def main():
 
     application = ApplicationBuilder().token(token).build()
 
-    # --- РЕГИСТРАЦИЯ КОМАНД (С КОРОТКИМИ НАЗВАНИЯМИ) ---
-    # Мы регистрируем и стандартные, и русские/короткие версии
-    
-    # Баланс
     application.add_handler(CommandHandler("balance", balance_cmd))
     application.add_handler(CommandHandler("б", balance_cmd))
     
-    # Рулетка
     application.add_handler(CommandHandler("roulette", roulette_cmd))
     application.add_handler(CommandHandler("рулетка", roulette_cmd))
     
-    # Блэкджек
     application.add_handler(CommandHandler("blackjack", blackjack_cmd))
     application.add_handler(CommandHandler("блекджек", blackjack_cmd))
     
-    # Слоты
     application.add_handler(CommandHandler("slots", slots_cmd))
     application.add_handler(CommandHandler("слоты", slots_cmd))
     
-    # Карта
     application.add_handler(CommandHandler("card", card_cmd))
     application.add_handler(CommandHandler("карта", card_cmd))
     
-    # Монетка
     application.add_handler(CommandHandler("coin", coin_cmd))
     application.add_handler(CommandHandler("монетка", coin_cmd))
     
-    # Бонус
     application.add_handler(CommandHandler("bonus", bonus_cmd))
-    
-    # Админ
     application.add_handler(CommandHandler("give", give_cmd))
     
-    # Обработчики кнопок
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(CallbackQueryHandler(handle_blackjack_callback))
 
