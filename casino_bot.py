@@ -34,11 +34,16 @@ def init_db():
     logger.info("База данных инициализирована.")
 
 def get_user(user_id):
-    """Получает данные пользователя. Возвращает кортеж или None."""
+    """Получает данные пользователя. Гарантирует создание записи."""
     try:
         conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row  # Важно: позволяет обращаться по именам колонок
         c = conn.cursor()
+        
+        # Создаем пользователя, если его нет
         c.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+        
+        # Получаем данные
         c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         user = c.fetchone()
         conn.close()
@@ -48,57 +53,71 @@ def get_user(user_id):
         return None
 
 def update_balance(user_id, amount):
-    """Обновляет баланс. amount может быть положительным или отрицательным."""
+    """Обновляет баланс. Возвращает новый баланс или False при ошибке."""
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
+        # Обновляем баланс
         c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+        
+        # Сразу проверяем, сколько стало
+        c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+        new_balance = c.fetchone()
+        
         conn.commit()
         conn.close()
-        logger.debug(f"Баланс пользователя {user_id} изменен на {amount}")
-        return True
+        logger.debug(f"Баланс пользователя {user_id} изменен на {amount}. Новый баланс: {new_balance}")
+        return new_balance
     except Exception as e:
         logger.error(f"Ошибка обновления баланса для {user_id}: {e}")
         return False
 
 def give_bonus(user_id):
-    """Выдает ежедневный бонус 200 фишек. Возвращает True, если бонус выдан."""
+    """Выдает ежедневный бонус 200 фишек. Строгая проверка времени."""
     now = datetime.now()
     user = get_user(user_id)
     
     if not user:
         return False
 
-    last_bonus_str = user[2]
+    # user['last_bonus'] теперь доступен по имени благодаря row_factory
+    last_bonus_str = user['last_bonus']
     
+    # Если бонуса никогда не было (NULL в БД)
     if last_bonus_str is None:
-        update_balance(user_id, 200)
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (now.isoformat(), user_id))
-        conn.commit()
-        conn.close()
-        return True
-    
-    try:
-        last_bonus = datetime.fromisoformat(last_bonus_str)
-        if (now - last_bonus) >= timedelta(hours=24):
-            update_balance(user_id, 200)
+        new_bal = update_balance(user_id, 200)
+        if new_bal is not False:
             conn = sqlite3.connect(DB_NAME)
             c = conn.cursor()
             c.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (now.isoformat(), user_id))
             conn.commit()
             conn.close()
             return True
+        return False
+    
+    try:
+        last_bonus = datetime.fromisoformat(last_bonus_str)
+        # Проверка: прошло ли больше 24 часов?
+        if (now - last_bonus) >= timedelta(hours=24):
+            new_bal = update_balance(user_id, 200)
+            if new_bal is not False:
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (now.isoformat(), user_id))
+                conn.commit()
+                conn.close()
+                return True
     except ValueError:
         logger.warning(f"Неверный формат даты в БД для пользователя {user_id}. Сброс таймера.")
-        update_balance(user_id, 200)
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (now.isoformat(), user_id))
-        conn.commit()
-        conn.close()
-        return True
+        # Если дата битая, считаем, что можно дать бонус, но фиксируем время
+        new_bal = update_balance(user_id, 200)
+        if new_bal is not False:
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (now.isoformat(), user_id))
+            conn.commit()
+            conn.close()
+            return True
         
     return False
 
